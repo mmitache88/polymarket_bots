@@ -21,12 +21,14 @@ load_dotenv()
 # Config
 MAX_PRICE = 0.05            # $0.05 = 5 cents
 MIN_PRICE = 0.0001          # ignore zero/near-zero if you want to skip
-MAX_PAGES = 300
+MAX_PAGES = 100
 PAGE_DELAY = 0.25           # seconds between page requests (be friendly to API)
 MIN_VOLUME = 0.0            # set >0 to filter dead markets (depends on API field)
 OUTPUT_FILE = "opportunities.json"
 PAGE_SIZE = 100             # if your client supports page_size param
 RECENT_DAYS = 90     # consider markets launched within the last N days "recent"
+OUTPUT_FILE = "opportunities.json"  # Keep this for analyst.py
+ARCHIVE_DIR = "scan_history"  # New: archive past scans
 
 # Optional: tweak environment variable names below to match your .env
 API_KEY = os.getenv("API_KEY")
@@ -180,9 +182,24 @@ def scan_markets():
     print(f"Total markets scanned: {total_scanned}")
     print(f"Opportunities found (< ${MAX_PRICE}): {len(opportunities)}")
 
-    # Save to file for downstream modules
+    # Create archive directory if it doesn't exist
+    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    
+    # Generate timestamped filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_file = os.path.join(ARCHIVE_DIR, f"scan_{timestamp}.json")
+
+    # Save to BOTH files
+    # 1. Current file (for analyst.py to consume)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(opportunities, f, indent=2, ensure_ascii=False)
+    
+    # 2. Timestamped archive (for historical tracking)
+    with open(archive_file, "w", encoding="utf-8") as f:
+        json.dump(opportunities, f, indent=2, ensure_ascii=False)
+    
+    print(f"Saved to: {OUTPUT_FILE}")
+    print(f"Archived to: {archive_file}")
 
     # Print top N
     TOP_N = 20
