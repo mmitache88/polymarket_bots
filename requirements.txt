@@ -10,3 +10,4 @@ rich>=13.6.0
 pydantic>=2.6.0
 py-clob-client==0.28.0
 python-dateutil>=2.9.0
+openai==2.8.1
