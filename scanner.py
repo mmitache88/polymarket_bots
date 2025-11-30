@@ -15,6 +15,7 @@ from utils.helpers import (
     parse_end_date,
     safe_get_volume
 )
+from utils.db import init_db, save_scan_to_db
 
 load_dotenv()
 
@@ -71,6 +72,8 @@ def build_client():
 
 
 def scan_markets():
+    init_db()
+    
     client = build_client()
 
     next_cursor = None
@@ -189,6 +192,9 @@ def scan_markets():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     archive_file = os.path.join(ARCHIVE_DIR, f"scan_{timestamp}.json")
 
+    # Save to database
+    scan_id = save_scan_to_db(total_scanned, opportunities)
+
     # Save to BOTH files
     # 1. Current file (for analyst.py to consume)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
@@ -200,6 +206,7 @@ def scan_markets():
     
     print(f"Saved to: {OUTPUT_FILE}")
     print(f"Archived to: {archive_file}")
+    print(f"Saved to database (scan_id: {scan_id})")
 
     # Print top N
     TOP_N = 20
