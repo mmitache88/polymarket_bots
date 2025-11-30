@@ -1,0 +1,53 @@
+# Environment variables (contains API keys and secrets)
+.env
+.env.local
+.env.*.local
+
+# Virtual environment
+polyenv/
+venv/
+env/
+ENV/
+.venv
+
+# JSON data files (scanner/analyst outputs)
+opportunities.json
+approved_trades.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
