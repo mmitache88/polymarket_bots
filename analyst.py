@@ -6,7 +6,10 @@ from openai import OpenAI
 
 # 1. Setup
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY")
+)
 
 INPUT_FILE = "opportunities.json"
 OUTPUT_FILE = "approved_trades.json"
@@ -69,7 +72,11 @@ def analyze_opportunity(market):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini", # Fast and cheap
+            extra_headers={
+                "HTTP-Referer": "https://github.com/mmitache88/polymarket_bots",  # Optional
+                "X-Title": "Polymarket Longshot Bot",  # Optional
+            },
+            model="openai/gpt-4o-mini",  # Use OpenRouter model syntax
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -84,6 +91,7 @@ def analyze_opportunity(market):
     except Exception as e:
         print(f"Error analyzing market: {e}")
         return {"score": 0, "reason": "Error"}
+
 
 def main():
     print("--- AI Analyst Initialized ---")
