@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds, OrderArgs
@@ -19,6 +20,7 @@ MAX_POSITIONS = 20          # Max number of concurrent positions
 MAX_PER_MARKET = 10.00      # Max $10 per market (prevent concentration)
 MAX_SPEND_PER_TRADE = 2.00  # $2.00 USD per bet
 MAX_SLIPPAGE = 0.002        # If price moved up by more than 0.2 cents, skip it
+MIN_TIME_TO_EXPIRY = 7  # Don't buy if market expires in < 7 days
 DRY_RUN = True  # Set to False for real trading
 
 def get_client():
@@ -87,6 +89,26 @@ def check_portfolio_limits():
     
     return True, total_exposure
 
+def check_time_to_expiry(end_date_str):
+    """Ensure market has enough time left to appreciate"""
+    if not end_date_str:
+        return False, "No end date provided"
+    
+    try:
+        # Parse ISO format date (e.g., "2024-12-15T23:59:59Z")
+        end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+        now = datetime.now(end_date.tzinfo)  # Match timezone
+        
+        days_left = (end_date - now).days
+        
+        if days_left < MIN_TIME_TO_EXPIRY:
+            return False, f"Only {days_left} days until expiry (need >{MIN_TIME_TO_EXPIRY})"
+        
+        return True, days_left
+    except Exception as e:
+        logger.warning(f"Could not parse end_date '{end_date_str}': {e}")
+        return False, f"Invalid end_date format"
+
 def main():
     logger.info("=" * 60)
     logger.info("Polymarket Execution Engine Initialized")
@@ -139,6 +161,7 @@ def main():
         question = trade.get('question')
         outcome_name = trade.get('outcome_name')
         market_id = trade.get('market_id')
+        end_date = trade.get('end_date')
         conviction = trade.get('analysis', {}).get('conviction', 'low')
         
         question_short = question[:50] + "..." if len(question) > 50 else question
@@ -149,6 +172,14 @@ def main():
         if token_id in active_token_ids:
             logger.info("   -> SKIPPING: Already have an active order for this token.")
             continue
+
+        # Safety Check: Ensure enough time until expiry
+        expiry_ok, days_left = check_time_to_expiry(end_date)
+        if not expiry_ok:
+            logger.warning(f"   -> SKIPPING: {days_left}")
+            continue
+        
+        logger.info(f"   -> Time until expiry: {days_left} days")
         
         # Calculate Size
         size, spend = calculate_position_size(trade)
