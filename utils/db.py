@@ -58,6 +58,32 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_opportunity_analysis
     ON analyses(opportunity_id)
     """)
+
+    # NEW: Trades table to track executed positions
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS trades (
+        trade_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        opportunity_id INTEGER,
+        order_id TEXT,
+        token_id TEXT,
+        market_question TEXT,
+        outcome_name TEXT,
+        shares REAL,
+        entry_price REAL,
+        entry_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        conviction TEXT,
+        status TEXT DEFAULT 'open',
+        exit_price REAL,
+        exit_date TIMESTAMP,
+        profit_loss REAL,
+        FOREIGN KEY (opportunity_id) REFERENCES opportunities(id)
+    )
+    """)
+    
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_trade_status
+    ON trades(status)
+    """)
     
     conn.commit()
     conn.close()
@@ -170,3 +196,68 @@ def get_analysis_history(market_id, outcome_id):
     results = cursor.fetchall()
     conn.close()
     return results
+
+def save_trade_to_db(opportunity_id, order_id, token_id, question, outcome, shares, entry_price, conviction):
+    """Save executed trade to database"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    INSERT INTO trades 
+    (opportunity_id, order_id, token_id, market_question, outcome_name, shares, entry_price, conviction, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')
+    """, (opportunity_id, order_id, token_id, question, outcome, shares, entry_price, conviction))
+    
+    trade_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return trade_id
+
+def get_open_positions():
+    """Get all open positions that need monitoring"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    SELECT 
+        trade_id,
+        token_id,
+        market_question,
+        outcome_name,
+        shares,
+        entry_price,
+        entry_date,
+        conviction
+    FROM trades
+    WHERE status = 'open'
+    ORDER BY entry_date DESC
+    """)
+    
+    columns = [desc[0] for desc in cursor.description]
+    results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+def update_position_exit(trade_id, exit_price):
+    """Mark position as closed and calculate P&L"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    # Get entry price to calculate P&L
+    cursor.execute("SELECT shares, entry_price FROM trades WHERE trade_id = ?", (trade_id,))
+    row = cursor.fetchone()
+    if row:
+        shares, entry_price = row
+        profit_loss = shares * (exit_price - entry_price)
+        
+        cursor.execute("""
+        UPDATE trades 
+        SET status = 'closed', 
+            exit_price = ?, 
+            exit_date = CURRENT_TIMESTAMP,
+            profit_loss = ?
+        WHERE trade_id = ?
+        """, (exit_price, profit_loss, trade_id))
+    
+    conn.commit()
+    conn.close()
