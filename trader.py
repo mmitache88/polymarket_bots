@@ -10,6 +10,9 @@ from utils.db import get_opportunity_id, save_trade_to_db
 # 1. Configuration
 load_dotenv()
 INPUT_FILE = "approved_trades.json"
+MAX_TOTAL_EXPOSURE = 50.00  # Max $50 total capital deployed
+MAX_POSITIONS = 20          # Max number of concurrent positions
+MAX_PER_MARKET = 10.00      # Max $10 per market (prevent concentration)
 MAX_SPEND_PER_TRADE = 2.00  # $2.00 USD per bet
 MAX_SLIPPAGE = 0.002        # If price moved up by more than 0.2 cents, skip it
 DRY_RUN = True  # Set to False for real trading
@@ -67,6 +70,24 @@ def check_price_slippage(client, token_id, expected_price):
         print(f"   [!] Could not verify price: {e}")
         return False, f"API error: {e}"
 
+def check_portfolio_limits():
+    """Ensure we don't exceed risk limits"""
+    from utils.db import get_open_positions
+    
+    positions = get_open_positions()
+    
+    # Check position count
+    if len(positions) >= MAX_POSITIONS:
+        return False, f"Already at max positions ({MAX_POSITIONS})"
+    
+    # Calculate total exposure
+    total_exposure = sum(p['shares'] * p['entry_price'] for p in positions)
+    
+    if total_exposure >= MAX_TOTAL_EXPOSURE:
+        return False, f"Total exposure ${total_exposure:.2f} exceeds limit ${MAX_TOTAL_EXPOSURE}"
+    
+    return True, total_exposure
+
 def main():
     print("--- Polymarket Execution Engine Initialized ---")
     
@@ -84,6 +105,15 @@ def main():
     if not trades:
         print("No approved trades found. Exiting.")
         return
+    
+    # Check portfolio limits BEFORE proceeding
+    limits_ok, current_exposure = check_portfolio_limits()
+    if not limits_ok:
+        print(f"\n⚠️  PORTFOLIO LIMIT REACHED: {current_exposure}")
+        print("Cannot place new trades. Wait for existing positions to close.")
+        return
+    
+    print(f"Current exposure: ${current_exposure:.2f} / ${MAX_TOTAL_EXPOSURE}")
 
     client = get_client()
     print(f"Loaded {len(trades)} approved trades. Checking existing orders...")
@@ -123,17 +153,17 @@ def main():
         size, spend = calculate_position_size(trade)
         print(f"   -> Position: {size} shares (~${spend:.2f} spend)")
 
-        # ADD SLIPPAGE CHECK HERE (before DRY_RUN):
-        # Verify price hasn't moved too much
-        price_ok, result = check_price_slippage(client, token_id, price)
-        if not price_ok:
-            print(f"   -> SKIPPING: {result}")
-            continue
+        # Verify price hasn't moved too much (skip in DRY_RUN to avoid API calls)
+        if not DRY_RUN:
+            price_ok, result = check_price_slippage(client, token_id, price)
+            if not price_ok:
+                print(f"   -> SKIPPING: {result}")
+                continue
         
-        # Update price if it changed slightly but is still acceptable
-        if isinstance(result, float):
-            price = result
-            print(f"   -> Updated price to: ${price:.4f}")
+            # Update price if it changed slightly but is still acceptable
+            if isinstance(result, float):
+                price = result
+                print(f"   -> Updated price to: ${price:.4f}")
 
         if DRY_RUN:
             print(f"   [DRY RUN] Would place: BUY {size} shares @ ${price:.4f}")
