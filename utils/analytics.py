@@ -142,7 +142,7 @@ if __name__ == "__main__":
     
     analyze_llm_accuracy()
     analyze_score_distribution()
-    analyze_most_analyzed_markets()
+    analyze_persistent_opportunities()
     analyze_approval_trends()
     
     print("\n" + "=" * 60)

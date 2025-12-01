@@ -6,6 +6,10 @@ from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds, OrderArgs
 from py_clob_client.order_builder.constants import BUY
 from utils.db import get_opportunity_id, save_trade_to_db
+from utils.logger import setup_logger
+
+# Setup logger
+logger = setup_logger('trader')
 
 # 1. Configuration
 load_dotenv()
@@ -36,27 +40,24 @@ def calculate_position_size(trade):
     base_spend = MAX_SPEND_PER_TRADE
     
     if conviction == 'high':
-        spend = base_spend * 2.5  # $5.00 for high conviction
+        spend = base_spend * 2.5
     elif conviction == 'medium':
-        spend = base_spend * 1.5  # $3.00 for medium
+        spend = base_spend * 1.5
     else:
-        spend = base_spend         # $2.00 for low
+        spend = base_spend
     
     price = trade.get('price', 0.001)
     if price <= 0: 
         price = 0.001
     
     size = int(spend / price)
-    
-    # Cap at max shares to avoid huge positions
     MAX_SHARES = 5000
     return min(size, MAX_SHARES), spend
 
 def check_price_slippage(client, token_id, expected_price):
     """Verify current price hasn't moved too much since scan"""
     try:
-        # Fetch current price from API
-        current_data = client.get_price(token_id)  # Check exact method in docs
+        current_data = client.get_price(token_id)
         current_price = current_data.get('price', expected_price)
         
         price_change = current_price - expected_price
@@ -67,7 +68,7 @@ def check_price_slippage(client, token_id, expected_price):
         
         return True, current_price
     except Exception as e:
-        print(f"   [!] Could not verify price: {e}")
+        logger.warning(f"Could not verify price: {e}")
         return False, f"API error: {e}"
 
 def check_portfolio_limits():
@@ -76,11 +77,9 @@ def check_portfolio_limits():
     
     positions = get_open_positions()
     
-    # Check position count
     if len(positions) >= MAX_POSITIONS:
         return False, f"Already at max positions ({MAX_POSITIONS})"
     
-    # Calculate total exposure
     total_exposure = sum(p['shares'] * p['entry_price'] for p in positions)
     
     if total_exposure >= MAX_TOTAL_EXPOSURE:
@@ -89,47 +88,49 @@ def check_portfolio_limits():
     return True, total_exposure
 
 def main():
-    print("--- Polymarket Execution Engine Initialized ---")
+    logger.info("=" * 60)
+    logger.info("Polymarket Execution Engine Initialized")
+    logger.info("=" * 60)
     
     if DRY_RUN:
-        print("⚠️  DRY RUN MODE - No real trades will be placed")
+        logger.warning("DRY RUN MODE - No real trades will be placed")
     
-    # 2. Load Approved Trades
+    # Load Approved Trades
     if not os.path.exists(INPUT_FILE):
-        print(f"File {INPUT_FILE} not found. Run analyst.py first.")
+        logger.error(f"File {INPUT_FILE} not found. Run analyst.py first.")
         return
 
     with open(INPUT_FILE, "r") as f:
         trades = json.load(f)
 
     if not trades:
-        print("No approved trades found. Exiting.")
+        logger.warning("No approved trades found. Exiting.")
         return
     
-    # Check portfolio limits BEFORE proceeding
+    # Check portfolio limits
     limits_ok, current_exposure = check_portfolio_limits()
     if not limits_ok:
-        print(f"\n⚠️  PORTFOLIO LIMIT REACHED: {current_exposure}")
-        print("Cannot place new trades. Wait for existing positions to close.")
+        logger.warning(f"PORTFOLIO LIMIT REACHED: {current_exposure}")
+        logger.warning("Cannot place new trades. Wait for existing positions to close.")
         return
     
-    print(f"Current exposure: ${current_exposure:.2f} / ${MAX_TOTAL_EXPOSURE}")
+    logger.info(f"Current exposure: ${current_exposure:.2f} / ${MAX_TOTAL_EXPOSURE}")
 
     client = get_client()
-    print(f"Loaded {len(trades)} approved trades. Checking existing orders...")
+    logger.info(f"Loaded {len(trades)} approved trades. Checking existing orders...")
 
-    # 3. Fetch Open Orders (To prevent double-buying)
+    # Fetch Open Orders
     try:
         open_orders = client.get_orders()
         active_token_ids = set()
         for order in open_orders:
             active_token_ids.add(order.get('token_id'))
-        print(f"You currently have {len(active_token_ids)} active orders. Skipping these.")
+        logger.info(f"You currently have {len(active_token_ids)} active orders. Skipping these.")
     except Exception as e:
-        print(f"Error fetching open orders: {e}")
+        logger.warning(f"Could not fetch open orders (continuing anyway): {e}")
         active_token_ids = set()
 
-    # 4. Execution Loop
+    # Execution Loop
     trades_placed = 0
     
     for i, trade in enumerate(trades):
@@ -141,37 +142,36 @@ def main():
         conviction = trade.get('analysis', {}).get('conviction', 'low')
         
         question_short = question[:50] + "..." if len(question) > 50 else question
-        print(f"\n[{i+1}/{len(trades)}] {question_short}")
-        print(f"   Outcome: {outcome_name} | Price: ${price:.4f} | Conviction: {conviction.upper()}")
+        logger.info(f"\n[{i+1}/{len(trades)}] {question_short}")
+        logger.info(f"   Outcome: {outcome_name} | Price: ${price:.4f} | Conviction: {conviction.upper()}")
 
         # Safety Checks
         if token_id in active_token_ids:
-            print("   -> SKIPPING: Already have an active order for this token.")
+            logger.info("   -> SKIPPING: Already have an active order for this token.")
             continue
         
-        # Calculate Size with conviction scaling
+        # Calculate Size
         size, spend = calculate_position_size(trade)
-        print(f"   -> Position: {size} shares (~${spend:.2f} spend)")
+        logger.info(f"   -> Position: {size} shares (~${spend:.2f} spend)")
 
-        # Verify price hasn't moved too much (skip in DRY_RUN to avoid API calls)
+        # Check slippage (only in real mode)
         if not DRY_RUN:
             price_ok, result = check_price_slippage(client, token_id, price)
             if not price_ok:
-                print(f"   -> SKIPPING: {result}")
+                logger.warning(f"   -> SKIPPING: {result}")
                 continue
         
-            # Update price if it changed slightly but is still acceptable
             if isinstance(result, float):
                 price = result
-                print(f"   -> Updated price to: ${price:.4f}")
+                logger.info(f"   -> Updated price to: ${price:.4f}")
 
         if DRY_RUN:
-            print(f"   [DRY RUN] Would place: BUY {size} shares @ ${price:.4f}")
+            logger.info(f"   [DRY RUN] Would place: BUY {size} shares @ ${price:.4f}")
             trades_placed += 1
             continue
         
         try:
-            # Create and Post Order
+            # Place Order
             resp = client.create_and_post_order(
                 OrderArgs(
                     price=price,
@@ -181,12 +181,11 @@ def main():
                 )
             )
             
-            # Check response for success
             if resp and resp.get('success'):
                 order_id = resp.get('orderID')
-                print(f"   >>> SUCCESS: Order Placed (ID: {order_id})")
+                logger.info(f"   >>> SUCCESS: Order Placed (ID: {order_id})")
                 
-                # Save to database for position tracking
+                # Save to database
                 try:
                     opportunity_id = get_opportunity_id(market_id, token_id)
                     if opportunity_id:
@@ -194,26 +193,25 @@ def main():
                             opportunity_id, order_id, token_id, 
                             question, outcome_name, size, price, conviction
                         )
-                        print(f"   -> Saved to position tracking database")
+                        logger.info(f"   -> Saved to position tracking database")
                 except Exception as db_err:
-                    print(f"   [Warning] Could not save to DB: {db_err}")
+                    logger.warning(f"Could not save to DB: {db_err}")
                 
                 trades_placed += 1
             else:
-                print(f"   [!] FAILED: {resp}")
+                logger.error(f"   FAILED: {resp}")
                 
         except Exception as e:
-            print(f"   [!] ERROR: {e}")
+            logger.error(f"   ERROR placing order: {e}", exc_info=True)
         
-        # Sleep to be gentle on rate limits and gas
         time.sleep(1)
 
-    print("\n" + "="*60)
-    print(f"EXECUTION COMPLETE")
-    print(f"Trades Placed: {trades_placed}/{len(trades)}")
+    logger.info("=" * 60)
+    logger.info(f"EXECUTION COMPLETE")
+    logger.info(f"Trades Placed: {trades_placed}/{len(trades)}")
     if DRY_RUN:
-        print("⚠️  DRY RUN MODE - Set DRY_RUN=False to execute real trades")
-    print("="*60)
+        logger.warning("DRY RUN MODE - Set DRY_RUN=False to execute real trades")
+    logger.info("=" * 60)
 
 if __name__ == "__main__":
     main()

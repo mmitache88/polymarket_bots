@@ -2,8 +2,12 @@ import time
 from datetime import datetime, timedelta
 from trader import get_client
 from utils.db import get_open_positions, update_position_exit
+from utils.logger import setup_logger
 from py_clob_client.clob_types import OrderArgs
 from py_clob_client.order_builder.constants import SELL
+
+# Setup logger
+logger = setup_logger('position_manager')
 
 # Configuration
 CHECK_INTERVAL = 300  # Check every 5 minutes
@@ -35,7 +39,6 @@ def should_exit_position(position):
     
     profit_multiple = current_price / entry_price if entry_price > 0 else 0
     
-    # Exit conditions
     if profit_multiple >= PROFIT_TARGET_10X:
         return True, f"10x profit target hit ({profit_multiple:.1f}x)"
     
@@ -49,13 +52,13 @@ def should_exit_position(position):
 
 def monitor_positions():
     """Main monitoring loop"""
-    print("="*60)
-    print("🔍 Position Manager Started")
-    print("="*60)
-    print(f"Check Interval: {CHECK_INTERVAL}s ({CHECK_INTERVAL//60} minutes)")
-    print(f"Profit Targets: 5x (after {MIN_HOLD_DAYS}d), 10x (immediate)")
-    print(f"Max Hold: {MAX_HOLD_DAYS} days")
-    print("="*60)
+    logger.info("=" * 60)
+    logger.info("Position Manager Started")
+    logger.info("=" * 60)
+    logger.info(f"Check Interval: {CHECK_INTERVAL}s ({CHECK_INTERVAL//60} minutes)")
+    logger.info(f"Profit Targets: 5x (after {MIN_HOLD_DAYS}d), 10x (immediate)")
+    logger.info(f"Max Hold: {MAX_HOLD_DAYS} days")
+    logger.info("=" * 60)
     
     client = get_client()
     
@@ -64,33 +67,30 @@ def monitor_positions():
             positions = get_open_positions()
             
             if not positions:
-                print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] No open positions to monitor.")
+                logger.info(f"No open positions to monitor.")
             else:
-                print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Monitoring {len(positions)} positions...")
+                logger.info(f"Monitoring {len(positions)} positions...")
                 
                 for pos in positions:
                     token_id = pos['token_id']
                     question = pos['market_question'][:50]
                     
-                    # Fetch current price
                     current_price = get_current_price(client, token_id)
                     pos['current_price'] = current_price
                     
-                    # Check exit conditions
                     should_sell, reason = should_exit_position(pos)
                     
                     entry_price = pos['entry_price']
                     profit_pct = ((current_price / entry_price - 1) * 100) if current_price and entry_price > 0 else 0
                     
-                    print(f"  • {question}")
-                    print(f"    Entry: ${entry_price:.4f} → Current: ${current_price:.4f} ({profit_pct:+.1f}%)")
-                    print(f"    Status: {reason}")
+                    logger.info(f"  • {question}")
+                    logger.info(f"    Entry: ${entry_price:.4f} → Current: ${current_price:.4f} ({profit_pct:+.1f}%)")
+                    logger.info(f"    Status: {reason}")
                     
                     if should_sell:
-                        print(f"    🎯 SELLING {pos['shares']} shares...")
+                        logger.info(f"    🎯 SELLING {pos['shares']} shares...")
                         
                         try:
-                            # Place sell order
                             resp = client.create_and_post_order(
                                 OrderArgs(
                                     price=current_price,
@@ -101,23 +101,22 @@ def monitor_positions():
                             )
                             
                             if resp and resp.get('success'):
-                                print(f"    ✅ SOLD: Order ID {resp.get('orderID')}")
+                                logger.info(f"    ✅ SOLD: Order ID {resp.get('orderID')}")
                                 update_position_exit(pos['trade_id'], current_price)
                             else:
-                                print(f"    ❌ SELL FAILED: {resp}")
+                                logger.error(f"    ❌ SELL FAILED: {resp}")
                         
                         except Exception as e:
-                            print(f"    ❌ ERROR: {e}")
+                            logger.error(f"    ❌ ERROR: {e}", exc_info=True)
             
-            # Wait before next check
             time.sleep(CHECK_INTERVAL)
         
         except KeyboardInterrupt:
-            print("\n\n⚠️  Position Manager Stopped by User")
+            logger.info("Position Manager Stopped by User")
             break
         except Exception as e:
-            print(f"\n❌ Error in monitoring loop: {e}")
-            time.sleep(60)  # Wait 1 minute before retrying
+            logger.error(f"Error in monitoring loop: {e}", exc_info=True)
+            time.sleep(60)
 
 if __name__ == "__main__":
     monitor_positions()
