@@ -3,6 +3,7 @@ import os
 import time
 from dotenv import load_dotenv
 from openai import OpenAI
+from utils.db import init_db, save_analysis_to_db
 
 # 1. Setup
 load_dotenv()
@@ -92,9 +93,11 @@ def analyze_opportunity(market):
         print(f"Error analyzing market: {e}")
         return {"score": 0, "reason": "Error"}
 
-
 def main():
     print("--- AI Analyst Initialized ---")
+    
+    # Initialize database
+    init_db()
     
     # 1. Load Opportunities
     if not os.path.exists(INPUT_FILE):
@@ -107,7 +110,6 @@ def main():
     print(f"Loaded {len(candidates)} candidates for analysis.")
     
     approved_trades = []
-    costs = 0.0
 
     # 2. Analyze Loop
     for i, market in enumerate(candidates):
@@ -120,8 +122,22 @@ def main():
         score = analysis.get('score', 0)
         reason = analysis.get('reason', 'No reason provided')
         
+        # Determine if approved
+        approved = score >= MIN_SCORE_THRESHOLD
+        
+        # Save analysis to database (link to the opportunity from scanner)
+        # We need to find the opportunity_id from the latest scan
+        # For now, we'll query by market_id and outcome_id
+        try:
+            from utils.db import get_opportunity_id
+            opportunity_id = get_opportunity_id(market['market_id'], market['outcome_id'])
+            if opportunity_id:
+                save_analysis_to_db(opportunity_id, analysis, approved)
+        except Exception as e:
+            print(f"   [Warning] Could not save analysis to DB: {e}")
+        
         # Log the result
-        if score >= MIN_SCORE_THRESHOLD:
+        if approved:
             print(f"   >>> APPROVED (Score {score}): {reason}")
             # Attach analysis to the record for the trader to see
             market['analysis'] = analysis
@@ -129,7 +145,7 @@ def main():
         else:
             print(f"   [REJECTED] (Score {score}): {reason}")
 
-        # Sleep briefly to avoid OpenAI rate limits if you're on a lower tier
+        # Sleep briefly to avoid OpenAI rate limits
         time.sleep(0.3)
 
     # 3. Save Approved List

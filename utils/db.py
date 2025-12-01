@@ -39,6 +39,26 @@ def init_db():
     ON opportunities(market_id, outcome_id)
     """)
     
+    # NEW: Analysis results table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS analyses (
+        analysis_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        opportunity_id INTEGER,
+        analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        score INTEGER,
+        reason TEXT,
+        conviction TEXT,
+        catalyst_date TEXT,
+        approved BOOLEAN,
+        FOREIGN KEY (opportunity_id) REFERENCES opportunities(id)
+    )
+    """)
+    
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_opportunity_analysis
+    ON analyses(opportunity_id)
+    """)
+    
     conn.commit()
     conn.close()
 
@@ -54,7 +74,8 @@ def save_scan_to_db(total_scanned, opportunities):
     )
     scan_id = cursor.lastrowid
     
-    # Insert opportunities
+    # Insert opportunities and return mapping of (market_id, outcome_id) -> opportunity_id
+    opportunity_map = {}
     for opp in opportunities:
         cursor.execute("""
         INSERT INTO opportunities 
@@ -71,10 +92,34 @@ def save_scan_to_db(total_scanned, opportunities):
             opp['start_date'],
             opp['end_date']
         ))
+        opportunity_id = cursor.lastrowid
+        key = (opp['market_id'], opp['outcome_id'])
+        opportunity_map[key] = opportunity_id
     
     conn.commit()
     conn.close()
-    return scan_id
+    return scan_id, opportunity_map
+
+def save_analysis_to_db(opportunity_id, analysis, approved):
+    """Save analyst LLM results to database"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    INSERT INTO analyses 
+    (opportunity_id, score, reason, conviction, catalyst_date, approved)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        opportunity_id,
+        analysis.get('score', 0),
+        analysis.get('reason', ''),
+        analysis.get('conviction', ''),
+        analysis.get('catalyst_date'),
+        approved
+    ))
+    
+    conn.commit()
+    conn.close()
 
 def get_price_history(market_id, outcome_id):
     """Get price history for a specific market/outcome"""
@@ -87,6 +132,39 @@ def get_price_history(market_id, outcome_id):
     JOIN scans s ON o.scan_id = s.scan_id
     WHERE o.market_id = ? AND o.outcome_id = ?
     ORDER BY s.scan_date
+    """, (market_id, outcome_id))
+    
+    results = cursor.fetchall()
+    conn.close()
+    return results
+
+def get_opportunity_id(market_id, outcome_id):
+    """Get the most recent opportunity_id for a market/outcome pair"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    SELECT id FROM opportunities
+    WHERE market_id = ? AND outcome_id = ?
+    ORDER BY first_seen DESC
+    LIMIT 1
+    """, (market_id, outcome_id))
+    
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+def get_analysis_history(market_id, outcome_id):
+    """Get all LLM analysis history for a specific market/outcome"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    SELECT a.analysis_date, a.score, a.reason, a.conviction, a.approved
+    FROM analyses a
+    JOIN opportunities o ON a.opportunity_id = o.id
+    WHERE o.market_id = ? AND o.outcome_id = ?
+    ORDER BY a.analysis_date
     """, (market_id, outcome_id))
     
     results = cursor.fetchall()

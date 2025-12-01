@@ -192,8 +192,8 @@ def scan_markets():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     archive_file = os.path.join(ARCHIVE_DIR, f"scan_{timestamp}.json")
 
-    # Save to database
-    scan_id = save_scan_to_db(total_scanned, opportunities)
+    # Save to database (now returns opportunity_map)
+    scan_id, opportunity_map = save_scan_to_db(total_scanned, opportunities)
 
     # Save to BOTH files
     # 1. Current file (for analyst.py to consume)
@@ -216,7 +216,7 @@ def scan_markets():
         print(f"    Market ID: {op['market_id']} | Outcome ID: {op['outcome_id']}")
         print("-" * 60)
 
-    return opportunities
+    return opportunities, opportunity_map
 
 
 if __name__ == "__main__":
