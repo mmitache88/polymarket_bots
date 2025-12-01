@@ -49,6 +49,24 @@ def calculate_position_size(trade):
     MAX_SHARES = 5000
     return min(size, MAX_SHARES), spend
 
+def check_price_slippage(client, token_id, expected_price):
+    """Verify current price hasn't moved too much since scan"""
+    try:
+        # Fetch current price from API
+        current_data = client.get_price(token_id)  # Check exact method in docs
+        current_price = current_data.get('price', expected_price)
+        
+        price_change = current_price - expected_price
+        slippage_pct = (price_change / expected_price) * 100
+        
+        if abs(price_change) > MAX_SLIPPAGE:
+            return False, f"Price moved {slippage_pct:+.1f}% (${expected_price:.4f} → ${current_price:.4f})"
+        
+        return True, current_price
+    except Exception as e:
+        print(f"   [!] Could not verify price: {e}")
+        return False, f"API error: {e}"
+
 def main():
     print("--- Polymarket Execution Engine Initialized ---")
     
@@ -104,6 +122,18 @@ def main():
         # Calculate Size with conviction scaling
         size, spend = calculate_position_size(trade)
         print(f"   -> Position: {size} shares (~${spend:.2f} spend)")
+
+        # ADD SLIPPAGE CHECK HERE (before DRY_RUN):
+        # Verify price hasn't moved too much
+        price_ok, result = check_price_slippage(client, token_id, price)
+        if not price_ok:
+            print(f"   -> SKIPPING: {result}")
+            continue
+        
+        # Update price if it changed slightly but is still acceptable
+        if isinstance(result, float):
+            price = result
+            print(f"   -> Updated price to: ${price:.4f}")
 
         if DRY_RUN:
             print(f"   [DRY RUN] Would place: BUY {size} shares @ ${price:.4f}")
