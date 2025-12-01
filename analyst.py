@@ -110,10 +110,11 @@ def main():
     costs = 0.0
 
     # 2. Analyze Loop
-    # We use a simple loop. For 500+ items, you might want to use asyncio later, 
-    # but for a start, this is easier to debug.
     for i, market in enumerate(candidates):
-        print(f"[{i+1}/{len(candidates)}] Analyzing: {market['question'][:40]}... ({market['outcome_name']})")
+        # Progress bar with truncated question
+        progress = f"[{i+1}/{len(candidates)}]"
+        question_preview = market['question'][:50] + "..." if len(market['question']) > 50 else market['question']
+        print(f"{progress} Analyzing: {question_preview} ({market['outcome_name']})")
         
         analysis = analyze_opportunity(market)
         score = analysis.get('score', 0)
