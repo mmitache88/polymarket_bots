@@ -5,12 +5,14 @@ from dotenv import load_dotenv
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds, OrderArgs
 from py_clob_client.order_builder.constants import BUY
+from utils.db import get_opportunity_id, save_trade_to_db
 
 # 1. Configuration
 load_dotenv()
 INPUT_FILE = "approved_trades.json"
 MAX_SPEND_PER_TRADE = 2.00  # $2.00 USD per bet
 MAX_SLIPPAGE = 0.002        # If price moved up by more than 0.2 cents, skip it
+DRY_RUN = True  # Set to False for real trading
 
 def get_client():
     creds = ApiCreds(
@@ -25,8 +27,33 @@ def get_client():
         creds=creds
     )
 
+def calculate_position_size(trade):
+    """Scale position size based on LLM conviction"""
+    conviction = trade.get('analysis', {}).get('conviction', 'low')
+    base_spend = MAX_SPEND_PER_TRADE
+    
+    if conviction == 'high':
+        spend = base_spend * 2.5  # $5.00 for high conviction
+    elif conviction == 'medium':
+        spend = base_spend * 1.5  # $3.00 for medium
+    else:
+        spend = base_spend         # $2.00 for low
+    
+    price = trade.get('price', 0.001)
+    if price <= 0: 
+        price = 0.001
+    
+    size = int(spend / price)
+    
+    # Cap at max shares to avoid huge positions
+    MAX_SHARES = 5000
+    return min(size, MAX_SHARES), spend
+
 def main():
     print("--- Polymarket Execution Engine Initialized ---")
+    
+    if DRY_RUN:
+        print("⚠️  DRY RUN MODE - No real trades will be placed")
     
     # 2. Load Approved Trades
     if not os.path.exists(INPUT_FILE):
@@ -44,7 +71,6 @@ def main():
     print(f"Loaded {len(trades)} approved trades. Checking existing orders...")
 
     # 3. Fetch Open Orders (To prevent double-buying)
-    # We fetch all open orders to build a set of 'token_ids' we are already bidding on
     try:
         open_orders = client.get_orders()
         active_token_ids = set()
@@ -56,27 +82,33 @@ def main():
         active_token_ids = set()
 
     # 4. Execution Loop
+    trades_placed = 0
+    
     for i, trade in enumerate(trades):
-        token_id = trade.get('outcome_id') # User's scanner calls this outcome_id
+        token_id = trade.get('outcome_id')
         price = trade.get('price')
-        question = trade.get('question')[:50]
+        question = trade.get('question')
+        outcome_name = trade.get('outcome_name')
+        market_id = trade.get('market_id')
+        conviction = trade.get('analysis', {}).get('conviction', 'low')
         
-        print(f"\nProcessing [{i+1}/{len(trades)}]: {question}...")
+        question_short = question[:50] + "..." if len(question) > 50 else question
+        print(f"\n[{i+1}/{len(trades)}] {question_short}")
+        print(f"   Outcome: {outcome_name} | Price: ${price:.4f} | Conviction: {conviction.upper()}")
 
         # Safety Checks
         if token_id in active_token_ids:
             print("   -> SKIPPING: Already have an active order for this token.")
             continue
         
-        # Calculate Size (Shares) based on $2.00 spend
-        # Example: $2.00 / $0.002 price = 1000 shares
-        if price <= 0: price = 0.001 # Safety for div by zero
-        size = MAX_SPEND_PER_TRADE / price
-        
-        # Round size to avoid API errors (usually integer shares are safest for dust)
-        size = int(size)
+        # Calculate Size with conviction scaling
+        size, spend = calculate_position_size(trade)
+        print(f"   -> Position: {size} shares (~${spend:.2f} spend)")
 
-        print(f"   -> Placing Limit Buy: {size} shares @ ${price}")
+        if DRY_RUN:
+            print(f"   [DRY RUN] Would place: BUY {size} shares @ ${price:.4f}")
+            trades_placed += 1
+            continue
         
         try:
             # Create and Post Order
@@ -91,7 +123,22 @@ def main():
             
             # Check response for success
             if resp and resp.get('success'):
-                print(f"   >>> SUCCESS: Order Placed (ID: {resp.get('orderID')})")
+                order_id = resp.get('orderID')
+                print(f"   >>> SUCCESS: Order Placed (ID: {order_id})")
+                
+                # Save to database for position tracking
+                try:
+                    opportunity_id = get_opportunity_id(market_id, token_id)
+                    if opportunity_id:
+                        save_trade_to_db(
+                            opportunity_id, order_id, token_id, 
+                            question, outcome_name, size, price, conviction
+                        )
+                        print(f"   -> Saved to position tracking database")
+                except Exception as db_err:
+                    print(f"   [Warning] Could not save to DB: {db_err}")
+                
+                trades_placed += 1
             else:
                 print(f"   [!] FAILED: {resp}")
                 
@@ -101,7 +148,12 @@ def main():
         # Sleep to be gentle on rate limits and gas
         time.sleep(1)
 
-    print("\n--- Execution Complete ---")
+    print("\n" + "="*60)
+    print(f"EXECUTION COMPLETE")
+    print(f"Trades Placed: {trades_placed}/{len(trades)}")
+    if DRY_RUN:
+        print("⚠️  DRY RUN MODE - Set DRY_RUN=False to execute real trades")
+    print("="*60)
 
 if __name__ == "__main__":
     main()
