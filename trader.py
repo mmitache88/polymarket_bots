@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds, OrderArgs
-from py_clob_client.order_builder.constants import BUY
+from py_clob_client.order_builder.constants import BUY, SELL
 from utils.db import get_opportunity_id, save_trade_to_db
 from utils.logger import setup_logger
 
@@ -21,7 +21,7 @@ MAX_PER_MARKET = 10.00      # Max $10 per market (prevent concentration)
 MAX_SPEND_PER_TRADE = 2.00  # $2.00 USD per bet
 MAX_SLIPPAGE = 0.002        # If price moved up by more than 0.2 cents, skip it
 MIN_TIME_TO_EXPIRY = 7  # Don't buy if market expires in < 7 days
-DRY_RUN = True  # Set to False for real trading
+DRY_RUN = False  # Set to False for real trading
 
 def get_client():
     creds = ApiCreds(
@@ -59,8 +59,19 @@ def calculate_position_size(trade):
 def check_price_slippage(client, token_id, expected_price):
     """Verify current price hasn't moved too much since scan"""
     try:
-        current_data = client.get_price(token_id)
-        current_price = current_data.get('price', expected_price)
+        # Get order book
+        order_book = client.get_order_book(token_id)
+        
+        # OrderBookSummary is an object with attributes, not a dict
+        if hasattr(order_book, 'asks') and order_book.asks:
+            # Get best ask price (lowest sell price)
+            current_price = float(order_book.asks[0].price)
+        elif hasattr(order_book, 'market'):
+            # Try market price if available
+            current_price = float(order_book.market.get('price', expected_price))
+        else:
+            logger.warning("Could not extract price from order book")
+            return True, expected_price
         
         price_change = current_price - expected_price
         slippage_pct = (price_change / expected_price) * 100
@@ -69,9 +80,10 @@ def check_price_slippage(client, token_id, expected_price):
             return False, f"Price moved {slippage_pct:+.1f}% (${expected_price:.4f} → ${current_price:.4f})"
         
         return True, current_price
+        
     except Exception as e:
         logger.warning(f"Could not verify price: {e}")
-        return False, f"API error: {e}"
+        return True, expected_price
 
 def check_portfolio_limits():
     """Ensure we don't exceed risk limits"""

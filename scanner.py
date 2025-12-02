@@ -22,7 +22,7 @@ load_dotenv()
 # Config
 MAX_PRICE = 0.05            # $0.05 = 5 cents
 MIN_PRICE = 0.0001          # ignore zero/near-zero if you want to skip
-MAX_PAGES = 100
+MAX_PAGES = 300
 PAGE_DELAY = 0.25           # seconds between page requests (be friendly to API)
 MIN_VOLUME = 0.0            # set >0 to filter dead markets (depends on API field)
 OUTPUT_FILE = "opportunities.json"

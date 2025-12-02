@@ -261,3 +261,59 @@ def update_position_exit(trade_id, exit_price):
     
     conn.commit()
     conn.close()
+
+def is_opportunity_analyzed(opportunity_id):
+    """Check if opportunity has already been analyzed"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    SELECT COUNT(*) FROM analyses
+    WHERE opportunity_id = ?
+    """, (opportunity_id,))
+    
+    count = cursor.fetchone()[0]
+    conn.close()
+    
+    return count > 0
+
+def get_approved_opportunities():
+    """Get all opportunities with score >= 6 for export to JSON"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    SELECT 
+        o.market_id,
+        o.outcome_id,
+        o.question,
+        o.outcome_name,
+        o.price,
+        o.end_date,
+        a.score,
+        a.reason,
+        a.conviction,
+        a.catalyst_date
+    FROM opportunities o
+    JOIN analyses a ON o.id = a.opportunity_id
+    WHERE a.approved = 1
+    ORDER BY a.score DESC, a.analysis_date DESC
+    """)
+    
+    columns = [desc[0] for desc in cursor.description]
+    results = []
+    
+    for row in cursor.fetchall():
+        result = dict(zip(columns, row))
+        
+        # Restructure to match approved_trades.json format
+        result['analysis'] = {
+            'score': result.pop('score'),
+            'reasoning': result.pop('reason'),  # Rename 'reason' to 'reasoning'
+            'conviction': result.pop('conviction'),
+            'catalyst_date': result.pop('catalyst_date')
+        }
+        results.append(result)
+    
+    conn.close()
+    return results
