@@ -15,26 +15,28 @@ logger = setup_logger('trader')
 # 1. Configuration
 load_dotenv()
 INPUT_FILE = "approved_trades.json"
-MAX_TOTAL_EXPOSURE = 50.00  # Max $50 total capital deployed
-MAX_POSITIONS = 20          # Max number of concurrent positions
+MAX_TOTAL_EXPOSURE = 100.00  # Max $100 total capital deployed
+MAX_POSITIONS = 50          # Max number of concurrent positions
 MAX_PER_MARKET = 10.00      # Max $10 per market (prevent concentration)
 MAX_SPEND_PER_TRADE = 2.00  # $2.00 USD per bet
-MAX_SLIPPAGE = 0.002        # If price moved up by more than 0.2 cents, skip it
-MIN_TIME_TO_EXPIRY = 7  # Don't buy if market expires in < 7 days
+MAX_SLIPPAGE = 0.005        # If price moved up by more than 0.5 cents, skip it
+MIN_TIME_TO_EXPIRY = 5  # Don't buy if market expires in < 5 days
 DRY_RUN = False  # Set to False for real trading
 
 def get_client():
-    creds = ApiCreds(
-        api_key=os.getenv("API_KEY"),
-        api_secret=os.getenv("API_SECRET"),
-        api_passphrase=os.getenv("API_PASSPHRASE")
-    )
-    return ClobClient(
+    client = ClobClient(
         host=os.getenv("HOST"),
         key=os.getenv("POLYGON_PRIVATE_KEY"), 
-        chain_id=int(os.getenv("CHAIN_ID")), 
-        creds=creds
+        chain_id=int(os.getenv("CHAIN_ID")),
+        signature_type=2,  # MetaMask/browser wallet
+        funder=os.getenv("POLYMARKET_PROXY_ADDRESS")
     )
+    
+    # Derive API credentials from private key
+    creds = client.derive_api_key()
+    client.set_api_creds(creds)
+    
+    return client
 
 def calculate_position_size(trade):
     """Scale position size based on LLM conviction"""
@@ -84,6 +86,12 @@ def check_price_slippage(client, token_id, expected_price):
     except Exception as e:
         logger.warning(f"Could not verify price: {e}")
         return True, expected_price
+
+# def check_price_slippage(client, token_id, expected_price):
+#     """Verify current price hasn't moved too much since scan"""
+#     # TEMPORARY: Skip price verification for testing
+#     logger.info(f"   -> Using scanned price ${expected_price:.4f} (slippage check disabled)")
+#     return True, expected_price
 
 def check_portfolio_limits():
     """Ensure we don't exceed risk limits"""
