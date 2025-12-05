@@ -61,8 +61,8 @@ def monitor_positions():
     logger.info("=" * 60)
     logger.info("Position Manager Started")
     logger.info("=" * 60)
-    logger.info(f"Check Interval: {CHECK_INTERVAL}s ({CHECK_INTERVAL//60} minutes)")
-    logger.info(f"Profit Targets: 5x (after {MIN_HOLD_DAYS}d), 10x (immediate)")
+    logger.info(f"Check Interval: {CHECK_INTERVAL}s ({CHECK_INTERVAL // 60} minutes)")
+    logger.info(f"Profit Targets: {PROFIT_TARGET_5X}x (after {MIN_HOLD_DAYS}d), {PROFIT_TARGET_10X}x (immediate)")
     logger.info(f"Max Hold: {MAX_HOLD_DAYS} days")
     logger.info("=" * 60)
     
@@ -73,56 +73,59 @@ def monitor_positions():
             positions = get_open_positions()
             
             if not positions:
-                logger.info(f"No open positions to monitor.")
-            else:
-                logger.info(f"Monitoring {len(positions)} positions...")
-                
-                for pos in positions:
-                    token_id = pos['token_id']
-                    question = pos['market_question'][:50]
-                    
-                    current_price = get_current_price(client, token_id)
-                    pos['current_price'] = current_price
-                    
-                    should_sell, reason = should_exit_position(pos)
-                    
-                    entry_price = pos['entry_price']
-                    profit_pct = ((current_price / entry_price - 1) * 100) if current_price and entry_price > 0 else 0
-                    
-                    logger.info(f"  • {question}")
-                    logger.info(f"    Entry: ${entry_price:.4f} → Current: ${current_price:.4f} ({profit_pct:+.1f}%)")
-                    logger.info(f"    Status: {reason}")
-                    
-                    if should_sell:
-                        logger.info(f"    🎯 SELLING {pos['shares']} shares...")
-                        
-                        try:
-                            resp = client.create_and_post_order(
-                                OrderArgs(
-                                    price=current_price,
-                                    size=pos['shares'],
-                                    side=SELL,
-                                    token_id=token_id
-                                )
-                            )
-                            
-                            if resp and resp.get('success'):
-                                logger.info(f"    ✅ SOLD: Order ID {resp.get('orderID')}")
-                                update_position_exit(pos['trade_id'], current_price)
-                            else:
-                                logger.error(f"    ❌ SELL FAILED: {resp}")
-                        
-                        except Exception as e:
-                            logger.error(f"    ❌ ERROR: {e}", exc_info=True)
+                logger.info("No open positions to monitor.")
+                time.sleep(CHECK_INTERVAL)
+                continue
             
+            logger.info(f"Monitoring {len(positions)} positions...")
+            
+            for pos in positions:
+                token_id = pos['token_id']
+                entry_price = pos['entry_price']
+                shares = pos['shares']
+                question = pos.get('question', 'Unknown')[:50]
+                entry_date = pos.get('entry_date')
+                
+                logger.info(f"  • {question}")
+                
+                # Get current price
+                current_price = get_current_price(client, token_id)
+                
+                # Handle case where price is unavailable
+                if current_price is None:
+                    logger.warning(f"    ⚠️ Could not fetch price - market may be closed or inactive")
+                    continue
+                
+                # Calculate metrics
+                profit_pct = ((current_price - entry_price) / entry_price) * 100
+                multiplier = current_price / entry_price if entry_price > 0 else 0
+                
+                # Calculate days held
+                if entry_date:
+                    days_held = (datetime.now() - datetime.fromisoformat(entry_date)).days
+                else:
+                    days_held = 0
+                
+                logger.info(f"    Entry: ${entry_price:.4f} → Current: ${current_price:.4f} ({profit_pct:+.1f}%)")
+                logger.info(f"    Status: Holding ({days_held}d, {multiplier:.1f}x)")
+                
+                # Check sell conditions
+                should_sell, reason = check_sell_conditions(pos, current_price, days_held, multiplier)
+                
+                if should_sell:
+                    logger.info(f"    🚨 SELL SIGNAL: {reason}")
+                    # Execute sell logic here
+                    # execute_sell(client, pos, current_price)
+                
+                time.sleep(0.5)  # Rate limiting between positions
+            
+            logger.info(f"Next check in {CHECK_INTERVAL // 60} minutes...")
             time.sleep(CHECK_INTERVAL)
-        
-        except KeyboardInterrupt:
-            logger.info("Position Manager Stopped by User")
-            break
+            
         except Exception as e:
-            logger.error(f"Error in monitoring loop: {e}", exc_info=True)
-            time.sleep(60)
+            logger.error(f"Error in monitoring loop: {e}")
+            time.sleep(60)  # Wait a minute before retrying
+
 
 if __name__ == "__main__":
     monitor_positions()
