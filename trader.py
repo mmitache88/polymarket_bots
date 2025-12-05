@@ -64,13 +64,14 @@ def check_price_slippage(client, token_id, expected_price):
         # Get order book
         order_book = client.get_order_book(token_id)
         
-        # OrderBookSummary is an object with attributes, not a dict
         if hasattr(order_book, 'asks') and order_book.asks:
-            # Get best ask price (lowest sell price)
-            current_price = float(order_book.asks[0].price)
-        elif hasattr(order_book, 'market'):
-            # Try market price if available
-            current_price = float(order_book.market.get('price', expected_price))
+            # Sort asks by price (ascending) to get the LOWEST/BEST ask
+            sorted_asks = sorted(order_book.asks, key=lambda x: float(x.price))
+            current_price = float(sorted_asks[0].price)
+        elif hasattr(order_book, 'bids') and order_book.bids:
+            # Fallback to best bid if no asks
+            sorted_bids = sorted(order_book.bids, key=lambda x: float(x.price), reverse=True)
+            current_price = float(sorted_bids[0].price)
         else:
             logger.warning("Could not extract price from order book")
             return True, expected_price
