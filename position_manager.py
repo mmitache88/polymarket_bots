@@ -17,14 +17,20 @@ MAX_HOLD_DAYS = 30
 MIN_HOLD_DAYS = 7  # Don't sell before 1 week unless 10x
 
 def get_current_price(client, token_id):
-    """Fetch current market price for a token"""
+    """Fetch current market price for a token (best bid - what we can sell at)"""
     try:
-        # Check py_clob_client docs for exact method
-        market = client.get_market(token_id=token_id)
-        # This depends on API structure - adjust as needed
-        return market.get('price', None)
+        order_book = client.get_order_book(token_id)
+        
+        if hasattr(order_book, 'bids') and order_book.bids:
+            # Sort bids descending to get HIGHEST bid (best price to sell at)
+            sorted_bids = sorted(order_book.bids, key=lambda x: float(x.price), reverse=True)
+            return float(sorted_bids[0].price)
+        
+        logger.warning(f"No bids available for {token_id[:20]}...")
+        return None
+        
     except Exception as e:
-        print(f"Error fetching price for {token_id}: {e}")
+        logger.error(f"Error fetching price for {token_id[:20]}...: {e}")
         return None
 
 def should_exit_position(position):
