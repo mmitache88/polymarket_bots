@@ -17,16 +17,33 @@ MAX_HOLD_DAYS = 30
 MIN_HOLD_DAYS = 7  # Don't sell before 1 week unless 10x
 
 def get_current_price(client, token_id):
-    """Fetch current market price for a token (best bid - what we can sell at)"""
+    """Fetch current market price for a token (mid-price between best bid and ask)"""
     try:
         order_book = client.get_order_book(token_id)
         
-        if hasattr(order_book, 'bids') and order_book.bids:
-            # Sort bids descending to get HIGHEST bid (best price to sell at)
-            sorted_bids = sorted(order_book.bids, key=lambda x: float(x.price), reverse=True)
-            return float(sorted_bids[0].price)
+        best_bid = None
+        best_ask = None
         
-        logger.warning(f"No bids available for {token_id[:20]}...")
+        if hasattr(order_book, 'bids') and order_book.bids:
+            sorted_bids = sorted(order_book.bids, key=lambda x: float(x.price), reverse=True)
+            best_bid = float(sorted_bids[0].price)
+        
+        if hasattr(order_book, 'asks') and order_book.asks:
+            sorted_asks = sorted(order_book.asks, key=lambda x: float(x.price))
+            best_ask = float(sorted_asks[0].price)
+        
+        # Calculate mid-price if both bid and ask exist
+        if best_bid and best_ask:
+            mid_price = (best_bid + best_ask) / 2
+            return mid_price
+        elif best_ask:
+            # No bids, use lowest ask
+            return best_ask
+        elif best_bid:
+            # No asks, use highest bid
+            return best_bid
+        
+        logger.warning(f"No bids or asks available for {token_id[:20]}...")
         return None
         
     except Exception as e:
@@ -83,7 +100,7 @@ def monitor_positions():
                 token_id = pos['token_id']
                 entry_price = pos['entry_price']
                 shares = pos['shares']
-                question = pos.get('question', 'Unknown')[:50]
+                question = pos.get('market_question', 'Unknown')[:50]  # Changed from 'question'
                 entry_date = pos.get('entry_date')
                 
                 logger.info(f"  • {question}")
@@ -107,10 +124,12 @@ def monitor_positions():
                     days_held = 0
                 
                 logger.info(f"    Entry: ${entry_price:.4f} → Current: ${current_price:.4f} ({profit_pct:+.1f}%)")
-                logger.info(f"    Status: Holding ({days_held}d, {multiplier:.1f}x)")
                 
-                # Check sell conditions
-                should_sell, reason = check_sell_conditions(pos, current_price, days_held, multiplier)
+                # Check sell conditions using existing function
+                pos['current_price'] = current_price  # Add current price to position dict
+                should_sell, reason = should_exit_position(pos)
+                
+                logger.info(f"    Status: {reason}")
                 
                 if should_sell:
                     logger.info(f"    🚨 SELL SIGNAL: {reason}")
