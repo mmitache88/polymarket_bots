@@ -39,24 +39,42 @@ def get_client():
     return client
 
 def calculate_position_size(trade):
-    """Scale position size based on LLM conviction"""
+    """Scale position size based on LLM conviction and probability edge"""
     conviction = trade.get('analysis', {}).get('conviction', 'low')
-    base_spend = MAX_SPEND_PER_TRADE
+    true_prob_str = trade.get('analysis', {}).get('true_probability_estimate', '0%')
     
-    if conviction == 'high':
-        spend = base_spend * 2.5
-    elif conviction == 'medium':
-        spend = base_spend * 1.5
-    else:
-        spend = base_spend
+    # Parse true probability (e.g., "5%" -> 0.05)
+    try:
+        true_prob = float(true_prob_str.replace('%', '')) / 100
+    except:
+        true_prob = 0
     
     price = trade.get('price', 0.001)
-    if price <= 0: 
+    if price <= 0:
         price = 0.001
     
-    size = int(spend / price)
+    # Calculate edge: true_prob - price
+    edge = true_prob - price
+    
+    base_spend = MAX_SPEND_PER_TRADE
+    
+    # Scale by conviction
+    if conviction == 'high':
+        base_spend *= 2.5
+    elif conviction == 'medium':
+        base_spend *= 1.5
+    else:
+        base_spend *= 1.0
+    
+    # Bonus for large edge
+    if edge > 0.10:  # 10%+ edge
+        base_spend *= 1.25
+    
+    # Calculate shares
+    size = int(base_spend / price)
     MAX_SHARES = 5000
-    return min(size, MAX_SHARES), spend
+    
+    return min(size, MAX_SHARES), base_spend
 
 def check_price_slippage(client, token_id, expected_price):
     """Verify current price hasn't moved too much since scan"""

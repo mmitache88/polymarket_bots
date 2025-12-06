@@ -49,6 +49,7 @@ def init_db():
         reason TEXT,
         conviction TEXT,
         catalyst_date TEXT,
+        true_probability_estimate TEXT,
         approved BOOLEAN,
         FOREIGN KEY (opportunity_id) REFERENCES opportunities(id)
     )
@@ -133,14 +134,15 @@ def save_analysis_to_db(opportunity_id, analysis, approved):
     
     cursor.execute("""
     INSERT INTO analyses 
-    (opportunity_id, score, reason, conviction, catalyst_date, approved)
-    VALUES (?, ?, ?, ?, ?, ?)
+    (opportunity_id, score, reason, conviction, catalyst_date, true_probability_estimate, approved)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (
         opportunity_id,
         analysis.get('score', 0),
         analysis.get('reason', ''),
         analysis.get('conviction', ''),
         analysis.get('catalyst_date'),
+        analysis.get('true_probability_estimate', '0%'),
         approved
     ))
     
