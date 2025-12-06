@@ -15,9 +15,9 @@ logger = setup_logger('trader')
 # 1. Configuration
 load_dotenv()
 INPUT_FILE = "approved_trades.json"
-MAX_TOTAL_EXPOSURE = 100.00  # Max $100 total capital deployed
-MAX_POSITIONS = 50          # Max number of concurrent positions
-MAX_PER_MARKET = 10.00      # Max $10 per market (prevent concentration)
+MAX_TOTAL_EXPOSURE = 500.00  # Max $100 total capital deployed
+MAX_POSITIONS = 100         # Max number of concurrent positions
+MAX_PER_MARKET = 20.00      # Max $10 per market (prevent concentration)
 MAX_SPEND_PER_TRADE = 2.00  # $2.00 USD per bet
 MAX_SLIPPAGE = 0.005        # If price moved up by more than 0.5 cents, skip it
 MIN_TIME_TO_EXPIRY = 5  # Don't buy if market expires in < 5 days
@@ -148,6 +148,28 @@ def check_time_to_expiry(end_date_str):
         logger.warning(f"Could not parse end_date '{end_date_str}': {e}")
         return False, f"Invalid end_date format"
 
+# ...existing code...
+
+def check_market_exposure(market_id):
+    """Ensure we don't over-concentrate in one market"""
+    from utils.db import get_open_positions
+    
+    positions = get_open_positions()
+    
+    # Sum exposure for this specific market
+    market_exposure = sum(
+        p['shares'] * p['entry_price'] 
+        for p in positions 
+        if p.get('market_id') == market_id
+    )
+    
+    if market_exposure >= MAX_PER_MARKET:
+        return False, f"Already ${market_exposure:.2f} in this market (max ${MAX_PER_MARKET})"
+    
+    remaining = MAX_PER_MARKET - market_exposure
+    return True, remaining
+
+
 def main():
     logger.info("=" * 60)
     logger.info("Polymarket Execution Engine Initialized")
@@ -219,6 +241,12 @@ def main():
             continue
         
         logger.info(f"   -> Time until expiry: {days_left} days")
+
+        # Safety Check: Market concentration limit
+        market_ok, market_result = check_market_exposure(market_id)
+        if not market_ok:
+            logger.warning(f"   -> SKIPPING: {market_result}")
+            continue
         
         # Calculate Size
         size, spend = calculate_position_size(trade)
