@@ -1,7 +1,9 @@
 import time
+import json
+import os
 from datetime import datetime, timedelta
 from trader import get_client
-from utils.db import get_open_positions, update_position_exit
+from utils.db import get_open_positions, update_position_exit, save_position_snapshot, init_db
 from utils.logger import setup_logger
 from py_clob_client.clob_types import OrderArgs
 from py_clob_client.order_builder.constants import SELL
@@ -15,6 +17,10 @@ PROFIT_TARGET_5X = 5.0
 PROFIT_TARGET_10X = 10.0
 MAX_HOLD_DAYS = 30
 MIN_HOLD_DAYS = 7  # Don't sell before 1 week unless 10x
+POSITION_HISTORY_DIR = "position_history"
+
+# Ensure directories exist
+os.makedirs(POSITION_HISTORY_DIR, exist_ok=True)
 
 def get_market_prices(client, token_id):
     """Fetch all market prices for a token (bid, ask, mid)"""
@@ -79,14 +85,32 @@ def should_exit_position(position):
     
     return False, f"Holding ({days_held}d, {profit_multiple:.1f}x)"
 
+def save_snapshot_to_json(snapshots, timestamp):
+    """Save position snapshots to JSON file"""
+    filename = f"{POSITION_HISTORY_DIR}/snapshot_{timestamp}.json"
+    
+    with open(filename, 'w') as f:
+        json.dump({
+            'timestamp': timestamp,
+            'snapshot_count': len(snapshots),
+            'positions': snapshots
+        }, f, indent=2, default=str)
+    
+    logger.info(f"💾 Saved snapshot to {filename}")
+    return filename
+
 def monitor_positions():
     """Main monitoring loop"""
+    # Initialize database
+    init_db()
+    
     logger.info("=" * 60)
     logger.info("Position Manager Started")
     logger.info("=" * 60)
     logger.info(f"Check Interval: {CHECK_INTERVAL}s ({CHECK_INTERVAL // 60} minutes)")
     logger.info(f"Profit Targets: {PROFIT_TARGET_5X}x (after {MIN_HOLD_DAYS}d), {PROFIT_TARGET_10X}x (immediate)")
     logger.info(f"Max Hold: {MAX_HOLD_DAYS} days")
+    logger.info(f"History Directory: {POSITION_HISTORY_DIR}/")
     logger.info("=" * 60)
     
     client = get_client()
@@ -102,14 +126,20 @@ def monitor_positions():
             
             logger.info(f"Monitoring {len(positions)} positions...")
             
+            # Collect all snapshots for JSON export
+            current_snapshots = []
+            snapshot_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
             for pos in positions:
+                trade_id = pos.get('trade_id')
                 token_id = pos['token_id']
                 entry_price = pos['entry_price']
                 shares = pos['shares']
-                question = pos.get('market_question', 'Unknown')[:50]
+                question = pos.get('market_question', 'Unknown')
+                question_short = question[:50]
                 entry_date = pos.get('entry_date')
                 
-                logger.info(f"  • {question}")
+                logger.info(f"  • {question_short}")
                 
                 # Get all market prices
                 prices = get_market_prices(client, token_id)
@@ -120,6 +150,7 @@ def monitor_positions():
                     continue
                 
                 best_bid = prices['best_bid']
+                best_ask = prices['best_ask']
                 mid_price = prices['mid_price']
                 spread = prices['spread']
                 bid_liquidity = prices['bid_liquidity']
@@ -158,8 +189,56 @@ def monitor_positions():
                     # Execute sell logic here
                     # execute_sell(client, pos, best_bid)
                 
+                # Create snapshot data
+                snapshot_data = {
+                    'trade_id': trade_id,
+                    'token_id': token_id,
+                    'market_question': question,
+                    'snapshot_time': datetime.now().isoformat(),
+                    'entry_price': entry_price,
+                    'mid_price': mid_price,
+                    'best_bid': best_bid,
+                    'best_ask': best_ask,
+                    'spread': spread,
+                    'bid_liquidity': bid_liquidity,
+                    'shares': shares,
+                    'profit_pct': realistic_profit_pct,
+                    'multiplier': realistic_multiplier,
+                    'days_held': days_held,
+                    'status': reason
+                }
+                
+                # Save to database
+                try:
+                    save_position_snapshot(
+                        trade_id=trade_id,
+                        token_id=token_id,
+                        market_question=question,
+                        entry_price=entry_price,
+                        mid_price=mid_price,
+                        best_bid=best_bid,
+                        best_ask=best_ask,
+                        spread=spread,
+                        bid_liquidity=bid_liquidity,
+                        shares=shares,
+                        profit_pct=realistic_profit_pct,
+                        multiplier=realistic_multiplier,
+                        days_held=days_held,
+                        status=reason
+                    )
+                except Exception as db_err:
+                    logger.warning(f"    ⚠️ Could not save to DB: {db_err}")
+                
+                # Add to JSON export list
+                current_snapshots.append(snapshot_data)
+                
                 time.sleep(0.5)  # Rate limiting between positions
             
+            # Save all snapshots to JSON file
+            if current_snapshots:
+                save_snapshot_to_json(current_snapshots, snapshot_timestamp)
+            
+            logger.info(f"✅ Saved {len(current_snapshots)} position snapshots")
             logger.info(f"Next check in {CHECK_INTERVAL // 60} minutes...")
             time.sleep(CHECK_INTERVAL)
             
