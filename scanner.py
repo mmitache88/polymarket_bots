@@ -27,7 +27,7 @@ PAGE_DELAY = 0.25           # seconds between page requests (be friendly to API)
 MIN_VOLUME = 0.0            # set >0 to filter dead markets (depends on API field)
 OUTPUT_FILE = "opportunities.json"
 PAGE_SIZE = 100             # if your client supports page_size param
-RECENT_DAYS = 90     # consider markets launched within the last N days "recent"
+RECENT_DAYS = 180     # consider markets launched within the last N days "recent"
 OUTPUT_FILE = "opportunities.json"  # Keep this for analyst.py
 ARCHIVE_DIR = "scan_history"  # New: archive past scans
 
