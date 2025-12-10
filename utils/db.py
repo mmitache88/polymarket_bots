@@ -85,6 +85,39 @@ def init_db():
     CREATE INDEX IF NOT EXISTS idx_trade_status
     ON trades(status)
     """)
+
+    # NEW: Position snapshots table for tracking price history
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS position_snapshots (
+        snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trade_id INTEGER,
+        token_id TEXT,
+        market_question TEXT,
+        snapshot_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        entry_price REAL,
+        mid_price REAL,
+        best_bid REAL,
+        best_ask REAL,
+        spread REAL,
+        bid_liquidity REAL,
+        shares REAL,
+        profit_pct REAL,
+        multiplier REAL,
+        days_held INTEGER,
+        status TEXT,
+        FOREIGN KEY (trade_id) REFERENCES trades(trade_id)
+    )
+    """)
+    
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_snapshot_trade
+    ON position_snapshots(trade_id)
+    """)
+    
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_snapshot_date
+    ON position_snapshots(snapshot_date)
+    """)
     
     conn.commit()
     conn.close()
@@ -319,3 +352,48 @@ def get_approved_opportunities():
     
     conn.close()
     return results
+
+def save_position_snapshot(trade_id, token_id, market_question, entry_price, 
+                           mid_price, best_bid, best_ask, spread, bid_liquidity,
+                           shares, profit_pct, multiplier, days_held, status):
+    """Save a position snapshot to the database"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    INSERT INTO position_snapshots 
+    (trade_id, token_id, market_question, entry_price, mid_price, best_bid, 
+     best_ask, spread, bid_liquidity, shares, profit_pct, multiplier, days_held, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        trade_id, token_id, market_question, entry_price, mid_price, best_bid,
+        best_ask, spread, bid_liquidity, shares, profit_pct, multiplier, days_held, status
+    ))
+    
+    conn.commit()
+    conn.close()
+
+def get_position_snapshots(trade_id=None, limit=100):
+    """Get position snapshots, optionally filtered by trade_id"""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    if trade_id:
+        cursor.execute("""
+        SELECT * FROM position_snapshots 
+        WHERE trade_id = ?
+        ORDER BY snapshot_date DESC
+        LIMIT ?
+        """, (trade_id, limit))
+    else:
+        cursor.execute("""
+        SELECT * FROM position_snapshots 
+        ORDER BY snapshot_date DESC
+        LIMIT ?
+        """, (limit,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
