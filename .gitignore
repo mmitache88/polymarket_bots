@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.*.local
+config/.env
 
 # Virtual environment
 polyenv/
@@ -13,12 +14,27 @@ ENV/
 # JSON data files (scanner/analyst outputs)
 opportunities.json
 approved_trades.json
+data/*.json
+
+# Data directory (DB and history files)
+data/*.db
+data/scan_history/
+data/position_history/
+data/portfolio_snapshots/
+
+# Legacy paths (in case files still exist in old locations)
+/scan_history/
+/position_history/
+/portfolio_snapshots/
+*.db
 
 # Python cache
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+strategies/**/__pycache__/
+shared/__pycache__/
 
 # Distribution / packaging
 .Python
@@ -47,14 +63,8 @@ wheels/
 
 # Logs
 *.log
+logs/
 
 # OS
 .DS_Store
 Thumbs.db
-
-*.db
-
-py
-
-/scan_history
-/position_history
