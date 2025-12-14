@@ -3,18 +3,19 @@ import os
 import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds, OrderArgs
+from py_clob_client.clob_types import OrderArgs
 from py_clob_client.order_builder.constants import BUY, SELL
-from utils.db import get_opportunity_id, save_trade_to_db
-from utils.logger import setup_logger
+# Use shared utilities
+from shared.polymarket_client import get_client
+from shared.db import get_opportunity_id, save_trade_to_db, get_open_positions
+from shared.logger import setup_logger
 
 # Setup logger
 logger = setup_logger('trader')
 
 # 1. Configuration
 load_dotenv()
-INPUT_FILE = "approved_trades.json"
+INPUT_FILE = "data/approved_trades.json"
 MAX_TOTAL_EXPOSURE = 500.00  # Max $100 total capital deployed
 MAX_POSITIONS = 100         # Max number of concurrent positions
 MAX_PER_MARKET = 20.00      # Max $10 per market (prevent concentration)
@@ -22,21 +23,6 @@ MAX_SPEND_PER_TRADE = 2.00  # $2.00 USD per bet
 MAX_SLIPPAGE = 0.005        # If price moved up by more than 0.5 cents, skip it
 MIN_TIME_TO_EXPIRY = 5  # Don't buy if market expires in < 5 days
 DRY_RUN = False  # Set to False for real trading
-
-def get_client():
-    client = ClobClient(
-        host=os.getenv("HOST"),
-        key=os.getenv("POLYGON_PRIVATE_KEY"), 
-        chain_id=int(os.getenv("CHAIN_ID")),
-        signature_type=2,  # MetaMask/browser wallet
-        funder=os.getenv("POLYMARKET_PROXY_ADDRESS")
-    )
-    
-    # Derive API credentials from private key
-    creds = client.derive_api_key()
-    client.set_api_creds(creds)
-    
-    return client
 
 def calculate_position_size(trade):
     """Scale position size based on LLM conviction and probability edge"""
@@ -106,17 +92,9 @@ def check_price_slippage(client, token_id, expected_price):
         logger.warning(f"Could not verify price: {e}")
         return True, expected_price
 
-# def check_price_slippage(client, token_id, expected_price):
-#     """Verify current price hasn't moved too much since scan"""
-#     # TEMPORARY: Skip price verification for testing
-#     logger.info(f"   -> Using scanned price ${expected_price:.4f} (slippage check disabled)")
-#     return True, expected_price
-
 def check_portfolio_limits():
     """Ensure we don't exceed risk limits"""
-    from utils.db import get_open_positions
-    
-    positions = get_open_positions()
+    positions = get_open_positions()  # Already imported from shared.db
     
     if len(positions) >= MAX_POSITIONS:
         return False, f"Already at max positions ({MAX_POSITIONS})"
@@ -152,8 +130,6 @@ def check_time_to_expiry(end_date_str):
 
 def check_market_exposure(market_id):
     """Ensure we don't over-concentrate in one market"""
-    from utils.db import get_open_positions
-    
     positions = get_open_positions()
     
     # Sum exposure for this specific market
@@ -199,7 +175,7 @@ def main():
     
     logger.info(f"Current exposure: ${current_exposure:.2f} / ${MAX_TOTAL_EXPOSURE}")
 
-    client = get_client()
+    client = get_client("longshot")
     logger.info(f"Loaded {len(trades)} approved trades. Checking existing orders...")
 
     # Fetch Open Orders
