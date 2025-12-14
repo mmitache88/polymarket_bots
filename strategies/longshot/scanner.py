@@ -4,7 +4,7 @@ import json
 from dotenv import load_dotenv
 from time import sleep
 from datetime import datetime, timezone, timedelta
-from utils.helpers import (
+from shared.helpers import (
     safe_get_start_date,
     is_recent_market,
     market_age_days,
@@ -15,7 +15,7 @@ from utils.helpers import (
     parse_end_date,
     safe_get_volume
 )
-from utils.db import init_db, save_scan_to_db
+from shared.db import init_db, save_scan_to_db
 
 load_dotenv()
 
@@ -28,8 +28,8 @@ MIN_VOLUME = 0.0            # set >0 to filter dead markets (depends on API fiel
 OUTPUT_FILE = "opportunities.json"
 PAGE_SIZE = 100             # if your client supports page_size param
 RECENT_DAYS = 180     # consider markets launched within the last N days "recent"
-OUTPUT_FILE = "opportunities.json"  # Keep this for analyst.py
-ARCHIVE_DIR = "scan_history"  # New: archive past scans
+OUTPUT_FILE = "data/opportunities.json"  # Keep this for analyst.py
+ARCHIVE_DIR = "data/scan_history"  # New: archive past scans
 
 # Optional: tweak environment variable names below to match your .env
 API_KEY = os.getenv("API_KEY")
