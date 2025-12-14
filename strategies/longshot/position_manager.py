@@ -1,6 +1,9 @@
+import sys
+import os
+# Add project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import time
 import json
-import os
 from datetime import datetime, timedelta
 from py_clob_client.clob_types import OrderArgs
 from py_clob_client.order_builder.constants import SELL
