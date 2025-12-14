@@ -2,11 +2,12 @@ import time
 import json
 import os
 from datetime import datetime, timedelta
-from trader import get_client
-from utils.db import get_open_positions, update_position_exit, save_position_snapshot, init_db
-from utils.logger import setup_logger
 from py_clob_client.clob_types import OrderArgs
 from py_clob_client.order_builder.constants import SELL
+from shared.polymarket_client import get_client
+from shared.db import get_open_positions, update_position_exit, save_position_snapshot, init_db
+from shared.logger import setup_logger
+
 
 # Setup logger
 logger = setup_logger('position_manager')
@@ -17,7 +18,7 @@ PROFIT_TARGET_5X = 5.0
 PROFIT_TARGET_10X = 10.0
 MAX_HOLD_DAYS = 30
 MIN_HOLD_DAYS = 7  # Don't sell before 1 week unless 10x
-POSITION_HISTORY_DIR = "position_history"
+POSITION_HISTORY_DIR = "data/position_history"
 
 # Ensure directories exist
 os.makedirs(POSITION_HISTORY_DIR, exist_ok=True)
@@ -113,7 +114,7 @@ def monitor_positions():
     logger.info(f"History Directory: {POSITION_HISTORY_DIR}/")
     logger.info("=" * 60)
     
-    client = get_client()
+    client = get_client("longshot")
     
     while True:
         try:
