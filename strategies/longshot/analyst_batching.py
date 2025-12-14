@@ -1,10 +1,13 @@
 import json
 import os
 import asyncio
+from datetime import datetime
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from utils.db import init_db, save_analysis_to_db, get_opportunity_id, is_opportunity_analyzed
-from utils.logger import setup_logger
+
+# Updated imports - use shared utilities
+from shared.db import init_db, save_analysis_to_db, get_opportunity_id, is_opportunity_analyzed
+from shared.logger import setup_logger
 
 # Setup
 load_dotenv()
@@ -15,17 +18,14 @@ client = AsyncOpenAI(
     api_key=os.getenv("OPENROUTER_API_KEY")
 )
 
-INPUT_FILE = "opportunities.json"
-OUTPUT_FILE = "approved_trades.json"
+# Updated file paths - use data/ directory
+INPUT_FILE = "data/opportunities.json"
+OUTPUT_FILE = "data/approved_trades.json"
 
 # Config
 MIN_SCORE_THRESHOLD = 6  # 0-10 score threshold for approval
 BATCH_SIZE = 20          # Process 20 opportunities simultaneously
 MAX_OPPORTUNITIES = None # Set to a number like 100 for testing, None for all
-
-from datetime import datetime
-
-# ...existing imports...
 
 async def analyze_opportunity(market, semaphore):
     """
