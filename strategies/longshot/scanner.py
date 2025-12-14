@@ -4,6 +4,7 @@ import json
 from dotenv import load_dotenv
 from time import sleep
 from datetime import datetime, timezone, timedelta
+from shared.polymarket_client import get_client
 from shared.helpers import (
     safe_get_start_date,
     is_recent_market,
@@ -31,15 +32,6 @@ RECENT_DAYS = 180     # consider markets launched within the last N days "recent
 OUTPUT_FILE = "data/opportunities.json"  # Keep this for analyst.py
 ARCHIVE_DIR = "data/scan_history"  # New: archive past scans
 
-# Optional: tweak environment variable names below to match your .env
-API_KEY = os.getenv("API_KEY")
-API_SECRET = os.getenv("API_SECRET")
-API_PASSPHRASE = os.getenv("API_PASSPHRASE")
-HOST = os.getenv("HOST")
-POLYGON_PRIVATE_KEY = os.getenv("POLYGON_PRIVATE_KEY")
-CHAIN_ID = os.getenv("CHAIN_ID")
-
-
 def exponential_backoff_request(func, *args, retries=4, base_delay=0.5, **kwargs):
     last_exc = None
     for i in range(retries):
@@ -50,31 +42,10 @@ def exponential_backoff_request(func, *args, retries=4, base_delay=0.5, **kwargs
             sleep(base_delay * (2 ** i))
     raise last_exc
 
-
-def build_client():
-    """Construct your py_clob_client client. Adjust args to your client constructor."""
-    from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import ApiCreds
-
-    creds = ApiCreds(
-        api_key=API_KEY,
-        api_secret=API_SECRET,
-        api_passphrase=API_PASSPHRASE
-    )
-
-    client = ClobClient(
-        host=HOST,
-        key=POLYGON_PRIVATE_KEY,
-        chain_id=int(CHAIN_ID) if CHAIN_ID else None,
-        creds=creds
-    )
-    return client
-
-
 def scan_markets():
     init_db()
     
-    client = build_client()
+    client = get_client("longshot")
 
     next_cursor = None
     page_count = 0
