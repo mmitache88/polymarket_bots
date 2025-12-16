@@ -96,19 +96,19 @@ CHAIN_ID=137
 ### Run in Mock Mode (Testing)
 
 ```bash
-PYTHONPATH=. python strategies/hft/main.py --mock --dry-run
+PYTHONPATH=. python -m strategies.hft.main --mock --dry-run
 ```
 
 ### Run in Dry-Run Mode (Live Data, No Real Trades)
 
 ```bash
-PYTHONPATH=. python strategies/hft/main.py --dry-run --token-id YOUR_TOKEN_ID
+PYTHONPATH=. python -m strategies.hft.main --dry-run --token-id YOUR_TOKEN_ID
 ```
 
 ### Run Live (Real Trading)
 
 ```bash
-PYTHONPATH=. python strategies/hft/main.py --token-id YOUR_TOKEN_ID
+PYTHONPATH=. python -m strategies.hft.main --token-id YOUR_TOKEN_ID
 ```
 
 ## ⚙️ Configuration
@@ -370,7 +370,7 @@ sqlite3 data/hft/hft_trades.db "SELECT * FROM trades LIMIT 10"
 ### Run with Mock Data
 
 ```bash
-PYTHONPATH=. python strategies/hft/main.py --mock --dry-run
+PYTHONPATH=. python -m strategies.hft.main --mock --dry-run
 ```
 
 ### Test Individual Components
@@ -382,7 +382,7 @@ from strategies.hft.strategies.early_entry import EarlyEntryStrategy
 from strategies.hft.models import MarketSnapshot, Inventory, Outcome
 from strategies.hft.config import config
 
-strategy = EarlyEntryStrategy(config.strategy)
+strategy = EarlyEntryStrategy(config.entry, config.exit, config.position)
 snapshot = MarketSnapshot(
     token_id='test',
     asset='BTC',
