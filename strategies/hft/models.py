@@ -259,6 +259,16 @@ class OrderState(BaseModel):
     filled_at: Optional[datetime] = None
     error_message: Optional[str] = None
 
+class ExecutionReport(BaseModel):
+    """Report from ExecutionService after order execution"""
+    order_id: Optional[str] = None
+    order_request: OrderRequest
+    status: OrderStatus
+    filled_size: float = 0.0
+    filled_price: Optional[float] = None
+    filled_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 # ============================================================
 # System Events
