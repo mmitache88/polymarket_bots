@@ -62,10 +62,29 @@ class ExitConfig(BaseModel):
 
 class RiskConfig(BaseModel):
     """Configuration for risk management"""
+    # Capital tracking
+    initial_capital: float = 1000.0  # Starting capital for drawdown calculation
+    
+    # Exposure limits
+    max_total_exposure: float = 200.0  # Max $ across all positions
+    max_position_size: float = 50.0  # Max $ per single position
+    
+    # Drawdown protection
     max_drawdown_pct: float = 25.0  # Kill switch at -25% total
+    
+    # Trading frequency limits
     cooldown_seconds: int = 10  # Wait between trades
-    max_orders_per_minute: int = 10  # Rate limiting
+    max_trades_per_minute: int = 6  # Rate limiting (was max_orders_per_minute)
+    
+    # Order quality
     max_slippage_pct: float = 2.0  # Max acceptable slippage
+    
+    # Market timing
+    exit_buffer_minutes: int = 5  # Don't enter if < 5 min until resolution
+    min_minutes_after_open: int = 5  # Don't enter if < 5 min after market opens
+    
+    # Emergency control
+    kill_switch: bool = False  # Set True to stop all trading
 
 
 class ExecutionConfig(BaseModel):
@@ -76,6 +95,9 @@ class ExecutionConfig(BaseModel):
     # Order settings
     order_type: str = "limit"  # "limit" or "market"
     limit_offset_pct: float = 0.5  # Place limit orders 0.5% from mid
+    
+    # Order timeout
+    order_timeout_seconds: int = 30  # How long to wait for fill before cancelling
 
 
 class LoggingConfig(BaseModel):
