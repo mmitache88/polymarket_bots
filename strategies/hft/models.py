@@ -39,6 +39,17 @@ class TradeIntentAction(str, Enum):
     EXIT = "EXIT"
     HOLD = "HOLD"
 
+class RejectionReason(str, Enum):
+    """Reasons why a trade intent was rejected by RiskManager"""
+    MAX_EXPOSURE = "MAX_EXPOSURE"
+    MAX_POSITION = "MAX_POSITION"
+    MAX_DRAWDOWN = "MAX_DRAWDOWN"
+    COOLDOWN = "COOLDOWN"
+    RATE_LIMIT = "RATE_LIMIT"
+    KILL_SWITCH = "KILL_SWITCH"
+    INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
+    MARKET_TIMING = "MARKET_TIMING"
+    PRICE_SLIPPAGE = "PRICE_SLIPPAGE"
 
 # ============================================================
 # Market Data Models
@@ -230,8 +241,9 @@ class OrderRequest(BaseModel):
 class Rejection(BaseModel):
     """Rejected trade intent"""
     intent: TradeIntent
-    reason: str
+    reason: RejectionReason  # Change from str to RejectionReason
     risk_check_failed: str
+    details: str = ""  # Add this optional field
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
