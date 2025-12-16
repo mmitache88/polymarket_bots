@@ -40,6 +40,7 @@ class ExecutionService:
         self.client = client
         self.config = config
         self.on_fill = on_fill
+        self.logger = get_logger(__name__)  # Self-managed logging
         
         # Order tracking
         self.pending_orders: Dict[str, OrderRequest] = {}

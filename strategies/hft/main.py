@@ -68,6 +68,7 @@ class HFTBot:
         # Initialize gateways
         if self.config.execution.mock_mode:
             self.logger.info("MOCK_MODE_ENABLED")
+            client = None # No client needed for mock
             self.market_gateway = MockPolymarketGateway(
                 token_id=token_id,
                 initial_mid=0.45,
@@ -79,6 +80,11 @@ class HFTBot:
                 update_interval=0.2
             )
         else:
+            # Live mode: Initialize real client
+            self.logger.info("LIVE_MODE_ENABLED")
+            from shared.polymarket_client import get_clob_client
+            client = get_clob_client()  # Get real Polymarket client
+
             # TODO: Implement real gateways
             raise NotImplementedError("Live gateways not yet implemented")
         
@@ -92,10 +98,10 @@ class HFTBot:
         # Initialize risk manager
         self.risk_manager = RiskManager(self.config.risk)
         
-        # Initialize execution service
+        # Initialize execution service with client (None for mock, real for live)
         self.execution_service = ExecutionService(
-            config=self.config.execution,
-            logger=self.logger
+            client=client,  # ✅ None for mock, ClobClient for live
+            config=self.config.execution
         )
         
         # Set market times (mock: 1 hour from now)
