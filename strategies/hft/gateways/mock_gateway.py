@@ -6,10 +6,13 @@ Simulates Polymarket and Binance WebSocket feeds.
 
 import asyncio
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Callable, Optional
 
 from ..models import MarketUpdate, OracleUpdate, OrderBook, OrderBookLevel
+from ..logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class MockPolymarketGateway:
@@ -33,57 +36,60 @@ class MockPolymarketGateway:
         self.is_running = False
         self.on_update: Optional[Callable[[MarketUpdate], None]] = None
     
-    def _generate_order_book(self) -> OrderBook:
-        """Generate a realistic order book around current mid price"""
-        # Random walk for mid price
-        change = random.gauss(0, self.volatility)
-        self.mid_price = max(0.01, min(0.99, self.mid_price + change))
-        
-        # Generate spread (1-5%)
-        spread_pct = random.uniform(0.01, 0.05)
-        half_spread = self.mid_price * spread_pct / 2
-        
-        best_bid = self.mid_price - half_spread
-        best_ask = self.mid_price + half_spread
-        
-        # Generate order book levels
-        bids = []
-        asks = []
-        
-        for i in range(5):
-            bid_price = best_bid - (i * 0.005)
-            ask_price = best_ask + (i * 0.005)
-            bid_size = random.uniform(100, 1000)
-            ask_size = random.uniform(100, 1000)
-            
-            bids.append(OrderBookLevel(price=round(bid_price, 4), size=round(bid_size, 2)))
-            asks.append(OrderBookLevel(price=round(ask_price, 4), size=round(ask_size, 2)))
-        
-        return OrderBook(
-            token_id=self.token_id,
-            bids=bids,
-            asks=asks,
-            timestamp=datetime.utcnow()
-        )
-    
     async def connect(self):
-        """Start the mock feed"""
+        """Connect to mock feed"""
+        logger.info("MOCK_POLY_CONNECT", {"token_id": self.token_id})
         self.is_running = True
     
     async def disconnect(self):
-        """Stop the mock feed"""
+        """Disconnect from mock feed"""
+        logger.info("MOCK_POLY_DISCONNECT")
         self.is_running = False
     
     async def run(self):
-        """Main loop emitting mock market updates"""
+        """Generate mock market updates"""
+        logger.info("MOCK_POLY_RUN_START", {"is_running": self.is_running})
+        
+        update_count = 0
         while self.is_running:
-            order_book = self._generate_order_book()
+            update_count += 1
+            
+            # Simulate price movement (random walk)
+            change = random.gauss(0, self.volatility)
+            self.mid_price = max(0.01, min(0.99, self.mid_price + change))
+            
+            # Build order book
+            spread = random.uniform(0.01, 0.03)
+            half_spread = spread / 2
+            
+            order_book = OrderBook(
+                token_id=self.token_id,
+                bids=[
+                    OrderBookLevel(price=self.mid_price - half_spread, size=random.uniform(100, 500)),
+                    OrderBookLevel(price=self.mid_price - half_spread - 0.01, size=random.uniform(200, 800)),
+                ],
+                asks=[
+                    OrderBookLevel(price=self.mid_price + half_spread, size=random.uniform(100, 500)),
+                    OrderBookLevel(price=self.mid_price + half_spread + 0.01, size=random.uniform(200, 800)),
+                ],
+                timestamp=datetime.utcnow()
+            )
+            
             update = MarketUpdate(
                 token_id=self.token_id,
                 order_book=order_book,
                 timestamp=datetime.utcnow()
             )
             
+            # Log every 10th update
+            if update_count % 10 == 1:
+                logger.info("MOCK_MARKET_UPDATE", {
+                    "count": update_count,
+                    "mid": round(self.mid_price, 4),
+                    "has_callback": self.on_update is not None
+                })
+            
+            # Call the callback if set
             if self.on_update:
                 self.on_update(update)
             
@@ -94,56 +100,78 @@ class MockBinanceGateway:
     """
     Mock Binance WebSocket gateway.
     
-    Simulates BTC/ETH/XRP price feeds with realistic movements.
+    Simulates price updates for BTC, ETH, XRP.
     """
-    
-    INITIAL_PRICES = {
-        "BTCUSDT": 104000.0,
-        "ETHUSDT": 3900.0,
-        "XRPUSDT": 2.40
-    }
-    
-    VOLATILITIES = {
-        "BTCUSDT": 50.0,  # $50 per tick
-        "ETHUSDT": 5.0,   # $5 per tick
-        "XRPUSDT": 0.01   # $0.01 per tick
-    }
     
     def __init__(
         self,
-        assets: list[str] = None,
-        update_interval: float = 0.1
+        assets: list = None,
+        update_interval: float = 0.2
     ):
-        self.assets = assets or ["BTCUSDT"]
-        self.prices = {asset: self.INITIAL_PRICES.get(asset, 100.0) for asset in self.assets}
+        self.assets = assets or ["BTCUSDT", "ETHUSDT", "XRPUSDT"]
         self.update_interval = update_interval
         self.is_running = False
         self.on_update: Optional[Callable[[OracleUpdate], None]] = None
+        
+        # Initial prices
+        self.prices = {
+            "BTCUSDT": 104500.0,
+            "ETHUSDT": 3900.0,
+            "XRPUSDT": 2.35
+        }
+        
+        # Volatility per asset
+        self.volatility = {
+            "BTCUSDT": 50.0,
+            "ETHUSDT": 5.0,
+            "XRPUSDT": 0.01
+        }
     
     async def connect(self):
-        """Start the mock feed"""
+        """Connect to mock feed"""
+        logger.info("MOCK_BINANCE_CONNECT", {"assets": self.assets})
         self.is_running = True
     
     async def disconnect(self):
-        """Stop the mock feed"""
+        """Disconnect from mock feed"""
+        logger.info("MOCK_BINANCE_DISCONNECT")
         self.is_running = False
     
     async def run(self):
-        """Main loop emitting mock oracle updates"""
+        """Generate mock price updates"""
+        logger.info("MOCK_BINANCE_RUN_START", {"is_running": self.is_running})
+        
+        update_count = 0
         while self.is_running:
+            update_count += 1
+            
+            # Update each asset
             for asset in self.assets:
-                volatility = self.VOLATILITIES.get(asset, 1.0)
-                change = random.gauss(0, volatility)
+                if asset not in self.prices:
+                    continue
+                
+                # Random walk
+                vol = self.volatility.get(asset, 1.0)
+                change = random.gauss(0, vol)
                 self.prices[asset] = max(0.01, self.prices[asset] + change)
                 
                 update = OracleUpdate(
                     asset=asset,
-                    price=round(self.prices[asset], 2),
+                    price=self.prices[asset],
                     timestamp=datetime.utcnow()
                 )
                 
+                # Call the callback if set
                 if self.on_update:
                     self.on_update(update)
+            
+            # Log every 50th update
+            if update_count % 50 == 1:
+                logger.info("MOCK_ORACLE_UPDATE", {
+                    "count": update_count,
+                    "prices": {k: round(v, 2) for k, v in self.prices.items()},
+                    "has_callback": self.on_update is not None
+                })
             
             await asyncio.sleep(self.update_interval)
 
