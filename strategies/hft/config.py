@@ -21,7 +21,7 @@ class MarketConfig(BaseModel):
 class EntryConfig(BaseModel):
     """Configuration for entry timing and conditions"""
     # Time-based entry conditions
-    min_minutes_since_open: int = 5  # Don't enter before 5 min
+    min_minutes_since_open: int = 0.0  # Don't enter before 5 min
     max_minutes_until_close: int = 10  # Don't enter if < 10 min left
     
     # Price-based entry conditions

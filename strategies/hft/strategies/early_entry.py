@@ -13,7 +13,8 @@ from ..models import (
     MarketSnapshot, Inventory, TradeIntent,
     TradeIntentAction, Side, Outcome
 )
-from ..config import config
+from ..config import HFTConfig
+from ..logger import HFTLogger
 
 
 class EarlyEntryStrategy(BaseStrategy):
@@ -31,11 +32,11 @@ class EarlyEntryStrategy(BaseStrategy):
     - Approaching market close
     """
     
-    name = "early_entry"
+    name: str = "early_entry"
     
-    def __init__(self):
+    def __init__(self, config: HFTConfig):
+        self.config = config
         self.entry_config = config.entry
-        self.exit_config = config.exit
         self.position_config = config.position
     
     def evaluate(
@@ -43,7 +44,7 @@ class EarlyEntryStrategy(BaseStrategy):
         snapshot: MarketSnapshot,
         inventory: Inventory
     ) -> Optional[TradeIntent]:
-        """Main evaluation logic"""
+        """Evaluate market and return trade intent"""
         
         # Check if we have an existing position
         position = inventory.get_position(snapshot.token_id)
@@ -61,41 +62,86 @@ class EarlyEntryStrategy(BaseStrategy):
         inventory: Inventory
     ) -> Optional[TradeIntent]:
         """Evaluate entry conditions"""
+        logger = HFTLogger("hft.strategy")
         
         # Time check: must be at least X minutes into market
         if snapshot.minutes_since_open < self.entry_config.min_minutes_since_open:
+            logger.debug("ENTRY_REJECT", {
+                "reason": "too_early",
+                "minutes_since_open": snapshot.minutes_since_open,
+                "min_required": self.entry_config.min_minutes_since_open
+            })
             return None
         
         # Time check: don't enter if too close to resolution
+        if snapshot.minutes_until_close is None:
+            logger.debug("ENTRY_REJECT", {
+                "reason": "minutes_until_close is None"
+            })
+            return None
+
         if snapshot.minutes_until_close < self.entry_config.max_minutes_until_close:
+            logger.debug("ENTRY_REJECT", {
+                "reason": "too_close_to_resolution",
+                "minutes_until_close": snapshot.minutes_until_close,
+                "max_allowed": self.entry_config.max_minutes_until_close
+            })
             return None
         
         # Price check
         entry_price = self._select_entry_price(snapshot)
         if entry_price is None:
+            logger.debug("ENTRY_REJECT", {"reason": "no_entry_price"})
             return None
         
         if entry_price > self.entry_config.max_entry_price:
+            logger.debug("ENTRY_REJECT", {
+                "reason": "price_too_high",
+                "entry_price": entry_price,
+                "max": self.entry_config.max_entry_price
+            })
             return None
         
         if entry_price < self.entry_config.min_entry_price:
+            logger.debug("ENTRY_REJECT", {
+                "reason": "price_too_low",
+                "entry_price": entry_price,
+                "min": self.entry_config.min_entry_price
+            })
             return None
         
         # Exposure check
         if inventory.total_exposure >= self.position_config.max_total_exposure:
+            logger.debug("ENTRY_REJECT", {
+                "reason": "max_exposure_reached",
+                "current": inventory.total_exposure,
+                "max": self.position_config.max_total_exposure
+            })
             return None
         
         # Concurrent position check
         if len(inventory.positions) >= self.position_config.max_concurrent_positions:
+            logger.debug("ENTRY_REJECT", {
+                "reason": "max_positions_reached",
+                "current": len(inventory.positions),
+                "max": self.position_config.max_concurrent_positions
+            })
             return None
         
         # Calculate size
         size = self._calculate_entry_size(snapshot, inventory)
         if size <= 0:
+            logger.debug("ENTRY_REJECT", {"reason": "size_zero"})
             return None
         
         # Determine side
         side, outcome = self._select_side(snapshot)
+        
+        logger.info("ENTRY_ACCEPTED", {
+            "price": entry_price,
+            "size": size,
+            "outcome": outcome.value
+        })
         
         return TradeIntent(
             action=TradeIntentAction.ENTER,

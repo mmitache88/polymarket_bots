@@ -6,7 +6,7 @@ Async event loop that wires all components together.
 
 import asyncio
 import signal
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from .config import config, HFTConfig
@@ -93,7 +93,7 @@ class HFTBot:
         self.oracle_gateway.on_update = self._on_oracle_update
         
         # Initialize strategy
-        self.strategy = EarlyEntryStrategy()
+        self.strategy = EarlyEntryStrategy(self.config)
         
         # Initialize risk manager
         self.risk_manager = RiskManager(self.config.risk)
@@ -106,14 +106,14 @@ class HFTBot:
         
         # Set market times (mock: 1 hour from now)
         self.market_start_time = datetime.utcnow()
-        self.market_end_time = datetime.utcnow().replace(
-            minute=(datetime.utcnow().minute + 55) % 60
-        )
+        self.market_end_time = datetime.utcnow() + timedelta(minutes=55)
         
         self.logger.info("SETUP_COMPLETE", {
             "strategy": self.strategy.name,
             "mock_mode": self.config.execution.mock_mode,
-            "dry_run": self.config.execution.dry_run
+            "dry_run": self.config.execution.dry_run,
+            "market_end_time": self.market_end_time.isoformat(),  # Add for debugging
+            "minutes_until_close": (self.market_end_time - datetime.utcnow()).total_seconds() / 60
         })
     
     def _load_positions(self):
@@ -216,7 +216,8 @@ class HFTBot:
             self.logger.info("SNAPSHOT_BUILT", {
                 "mid_price": snapshot.poly_mid_price,
                 "oracle_price": snapshot.oracle_price,
-                "minutes_since_open": snapshot.minutes_since_open
+                "minutes_since_open": snapshot.minutes_since_open,
+                "minutes_until_close": snapshot.minutes_until_close  # ← ADD THIS
             })
             
             # Run strategy
@@ -238,7 +239,7 @@ class HFTBot:
                 )
                 
                 # Run through risk manager
-                result = self.risk_manager.check(intent, self.inventory)
+                result = self.risk_manager.validate(intent, self.inventory, snapshot)
                 
                 if isinstance(result, OrderRequest):
                     # Execute trade
