@@ -189,7 +189,17 @@ class HFTBot:
         """Main trading loop"""
         self.logger.info("MAIN_LOOP_START")
         
+        loop_count = 0
         while self.is_running:
+            loop_count += 1
+            # Debug: Log every 50 iterations
+            if loop_count % 50 == 0:
+                self.logger.info("LOOP_HEARTBEAT", {
+                    "iteration": loop_count,
+                    "has_market": self.latest_market_update is not None,
+                    "has_oracle": self.latest_oracle_update is not None
+                })
+
             # Check kill switch
             if self.config.kill_switch:
                 self.logger.kill_switch("Config kill switch activated", "user")
@@ -201,9 +211,21 @@ class HFTBot:
             if not snapshot:
                 await asyncio.sleep(0.1)
                 continue
+
+            # Debug: Log snapshot built
+            self.logger.info("SNAPSHOT_BUILT", {
+                "mid_price": snapshot.poly_mid_price,
+                "oracle_price": snapshot.oracle_price,
+                "minutes_since_open": snapshot.minutes_since_open
+            })
             
             # Run strategy
             intent = self.strategy.evaluate(snapshot, self.inventory)
+
+            self.logger.info("STRATEGY_RESULT", {
+                "action": intent.action.value if intent else "NONE",
+                "reason": intent.reason if intent else "No intent"
+            })
             
             if intent:
                 self.logger.trade_intent(
