@@ -1,4 +1,4 @@
-"""
+""""
 Early Entry Strategy
 
 Buy low-priced YES or NO early in the market (5+ minutes in),
@@ -38,6 +38,7 @@ class EarlyEntryStrategy(BaseStrategy):
         self.config = config
         self.entry_config = config.entry
         self.position_config = config.position
+        self.exit_config = config.exit  # <--- FIX: Added this line
     
     def evaluate(
         self,
