@@ -1,4 +1,4 @@
-"""
+""""
 Risk Manager - The Gatekeeper
 
 Validates all trade intents before execution.
@@ -44,29 +44,23 @@ class RiskManager:
     ) -> Union[OrderRequest, Rejection]:
         """
         Validate a trade intent against all risk checks.
-        
-        Args:
-            intent: The trade intent from strategy engine
-            inventory: Current inventory state
-            snapshot: Current market snapshot
-            
-        Returns:
-            OrderRequest if approved, Rejection if denied
         """
         # Check kill switch first
         if self.config.kill_switch:
             return Rejection(
                 intent=intent,
                 reason=RejectionReason.KILL_SWITCH,
-                message="Kill switch is active"
+                risk_check_failed="Kill Switch",
+                details="Kill switch is active"
             )
         
         # Skip validation for HOLD actions
         if intent.action == TradeIntentAction.HOLD:
             return Rejection(
                 intent=intent,
-                reason=RejectionReason.MARKET_CLOSED,
-                message="No action required"
+                reason=RejectionReason.MARKET_TIMING,
+                risk_check_failed="No Action",
+                details="No action required"
             )
         
         # Run all checks
@@ -87,6 +81,7 @@ class RiskManager:
         # All checks passed - create order request
         return OrderRequest(
             intent=intent,
+            approved_size=intent.size,  # Explicitly set approved size
             approved_at=datetime.utcnow(),
             max_slippage=self.config.max_slippage
         )
@@ -104,7 +99,8 @@ class RiskManager:
             return Rejection(
                 intent=intent,
                 reason=RejectionReason.COOLDOWN,
-                message=f"Cooldown active: {self.config.cooldown_seconds - time_since_last:.1f}s remaining"
+                risk_check_failed="Cooldown Timer",
+                details=f"Cooldown active: {self.config.cooldown_seconds - time_since_last:.1f}s remaining"
             )
         return None
     
@@ -125,8 +121,9 @@ class RiskManager:
         if self.trades_this_minute >= self.config.max_trades_per_minute:
             return Rejection(
                 intent=intent,
-                reason=RejectionReason.COOLDOWN,
-                message=f"Rate limit: {self.config.max_trades_per_minute} trades/min exceeded"
+                reason=RejectionReason.RATE_LIMIT,  # Fixed: changed from COOLDOWN
+                risk_check_failed="Rate Limit",
+                details=f"Rate limit: {self.config.max_trades_per_minute} trades/min exceeded"
             )
         return None
     
@@ -142,22 +139,30 @@ class RiskManager:
             return None
         
         # Calculate new exposure
-        trade_value = intent.size * intent.price
-        new_exposure = inventory.total_exposure + trade_value
+        trade_value = intent.size * intent.price  # Note: logic might vary if size is shares vs dollars
+        # Assuming intent.size is in dollars based on models.py comment: "size: float # In dollars"
+        # If size is dollars, trade_value is just intent.size. 
+        # If size is shares, trade_value is intent.size * intent.price.
+        # Based on config "MAX_POSITION_SIZE = 50.00", it looks like size is USD.
+        
+        trade_usd_value = intent.size  # Assuming size is USD
+        new_exposure = inventory.total_exposure + trade_usd_value
         
         if new_exposure > self.config.max_total_exposure:
             return Rejection(
                 intent=intent,
                 reason=RejectionReason.MAX_EXPOSURE,
-                message=f"Would exceed max exposure: ${new_exposure:.2f} > ${self.config.max_total_exposure:.2f}"
+                risk_check_failed="Max Total Exposure",
+                details=f"Would exceed max exposure: ${new_exposure:.2f} > ${self.config.max_total_exposure:.2f}"
             )
         
         # Check per-position limit
-        if trade_value > self.config.max_position_size:
+        if trade_usd_value > self.config.max_position_size:
             return Rejection(
                 intent=intent,
                 reason=RejectionReason.MAX_EXPOSURE,
-                message=f"Position size ${trade_value:.2f} exceeds max ${self.config.max_position_size:.2f}"
+                risk_check_failed="Max Position Size",
+                details=f"Position size ${trade_usd_value:.2f} exceeds max ${self.config.max_position_size:.2f}"
             )
         
         return None
@@ -182,7 +187,8 @@ class RiskManager:
                 return Rejection(
                     intent=intent,
                     reason=RejectionReason.MAX_DRAWDOWN,
-                    message=f"Max drawdown reached: {drawdown_pct:.1f}% >= {self.config.max_drawdown_pct:.1f}%"
+                    risk_check_failed="Max Drawdown",
+                    details=f"Max drawdown reached: {drawdown_pct:.1f}% >= {self.config.max_drawdown_pct:.1f}%"
                 )
         
         return None
@@ -196,19 +202,21 @@ class RiskManager:
         """Check if market timing is appropriate"""
         # Don't enter if too close to resolution
         if intent.action == TradeIntentAction.ENTER:
-            if snapshot.minutes_until_resolution < self.config.exit_buffer_minutes:
+            if snapshot.minutes_until_close < self.config.exit_buffer_minutes:
                 return Rejection(
                     intent=intent,
-                    reason=RejectionReason.MARKET_CLOSED,
-                    message=f"Too close to resolution: {snapshot.minutes_until_resolution:.1f}min < {self.config.exit_buffer_minutes}min buffer"
+                    reason=RejectionReason.MARKET_TIMING,
+                    risk_check_failed="Exit Buffer",
+                    details=f"Too close to resolution: {snapshot.minutes_until_close:.1f}min < {self.config.exit_buffer_minutes}min buffer"
                 )
             
             # Don't enter if market too young (optional)
             if snapshot.minutes_since_open < self.config.min_minutes_after_open:
                 return Rejection(
                     intent=intent,
-                    reason=RejectionReason.MARKET_CLOSED,
-                    message=f"Market too young: {snapshot.minutes_since_open:.1f}min < {self.config.min_minutes_after_open}min minimum"
+                    reason=RejectionReason.MARKET_TIMING,
+                    risk_check_failed="Min Market Age",
+                    details=f"Market too young: {snapshot.minutes_since_open:.1f}min < {self.config.min_minutes_after_open}min minimum"
                 )
         
         return None
@@ -227,8 +235,9 @@ class RiskManager:
                 if slippage > self.config.max_slippage:
                     return Rejection(
                         intent=intent,
-                        reason=RejectionReason.PRICE_MOVED,
-                        message=f"Price slippage {slippage:.2%} > {self.config.max_slippage:.2%}"
+                        reason=RejectionReason.PRICE_SLIPPAGE,  # Fixed: changed from PRICE_MOVED (was undefined)
+                        risk_check_failed="Max Slippage",
+                        details=f"Price slippage {slippage:.2%} > {self.config.max_slippage:.2%}"
                     )
         
         return None

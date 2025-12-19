@@ -198,6 +198,16 @@ class Inventory(BaseModel):
     total_exposure: float = 0.0
     realized_pnl: float = 0.0
     
+    @property
+    def unrealized_pnl(self) -> float:
+        """Sum of unrealized PnL across all open positions"""
+        return sum((p.unrealized_pnl or 0.0) for p in self.positions)
+
+    @property
+    def total_pnl(self) -> float:
+        """Realized + Unrealized PnL"""
+        return self.realized_pnl + self.unrealized_pnl
+
     def get_position(self, token_id: str) -> Optional[Position]:
         for pos in self.positions:
             if pos.token_id == token_id:
