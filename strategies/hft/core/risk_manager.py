@@ -83,7 +83,8 @@ class RiskManager:
             intent=intent,
             approved_size=intent.size,  # Explicitly set approved size
             approved_at=datetime.utcnow(),
-            max_slippage=self.config.max_slippage
+            # FIX: Use max_slippage_pct instead of max_slippage
+            max_slippage=self.config.max_slippage_pct
         )
     
     def _check_cooldown(
@@ -232,12 +233,13 @@ class RiskManager:
             # For buys, check if ask has moved up
             if snapshot.poly_best_ask and intent.price:
                 slippage = (snapshot.poly_best_ask - intent.price) / intent.price
-                if slippage > self.config.max_slippage:
+                # FIX: Use max_slippage_pct instead of max_slippage
+                if slippage > self.config.max_slippage_pct:
                     return Rejection(
                         intent=intent,
                         reason=RejectionReason.PRICE_SLIPPAGE,  # Fixed: changed from PRICE_MOVED (was undefined)
                         risk_check_failed="Max Slippage",
-                        details=f"Price slippage {slippage:.2%} > {self.config.max_slippage:.2%}"
+                        details=f"Price slippage {slippage:.2%} > {self.config.max_slippage_pct:.2%}"
                     )
         
         return None
