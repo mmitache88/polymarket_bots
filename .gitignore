@@ -65,6 +65,9 @@ wheels/
 *.log
 logs/
 
+# Images
+*.png
+
 # OS
 .DS_Store
 Thumbs.db
