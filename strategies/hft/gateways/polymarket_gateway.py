@@ -10,9 +10,9 @@ from datetime import datetime
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderBookSummary
 
-from ...models import MarketUpdate
-from ...logger import get_logger
-from ....shared.polymarket_client import get_client
+from ..models import MarketUpdate
+from ..logger import get_logger
+from shared.polymarket_client import get_client
 
 
 class PolymarketGateway:
