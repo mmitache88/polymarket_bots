@@ -80,11 +80,24 @@ async def validate_token_ids(token_ids: List[str]) -> bool:
     
     for token_id in token_ids:
         try:
-            book = client.get_order_book(token_id)
-            if not book or (not book.bids and not book.asks):
+            # get_order_book is synchronous, so we run it in executor
+            loop = asyncio.get_event_loop()
+            book = await loop.run_in_executor(None, client.get_order_book, token_id)
+            
+            if not book:
+                print(f"❌ No orderbook for {token_id}")
+                return False
+            
+            # Check if there's any liquidity
+            has_bids = hasattr(book, 'bids') and len(book.bids) > 0
+            has_asks = hasattr(book, 'asks') and len(book.asks) > 0
+            
+            if not has_bids and not has_asks:
                 print(f"❌ No liquidity for {token_id}")
                 return False
-            print(f"✅ Token {token_id} validated (has orderbook)")
+                
+            print(f"✅ Token {token_id} validated (bids: {len(book.bids) if has_bids else 0}, asks: {len(book.asks) if has_asks else 0})")
+            
         except Exception as e:
             print(f"❌ Token {token_id} invalid: {e}")
             return False
