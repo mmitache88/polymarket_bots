@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+from typing import List
 
 # Ensure Python can find your modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -32,6 +33,14 @@ async def main():
 
     print(f"✅ Captured {len(new_token_ids)} tokens from {len(market_names)} market(s).")
 
+    # 2.5. Validate tokens before updating config
+    print("\n🔍 Validating token IDs...")
+    if not await validate_token_ids(new_token_ids):
+        print("❌ Token validation failed. Config will NOT be updated.")
+        return
+    
+    print("✅ All tokens validated successfully")
+
     # 3. Load the existing configuration
     config_path = "strategies/hft/config.json"
     
@@ -57,6 +66,30 @@ async def main():
     print(f"Active Market: {market_names[0]}")
     print(f"Token IDs set: {len(current_config.market.token_ids)}")
     print("You can now restart your trading bot to pick up the new ID.")
+
+async def validate_token_ids(token_ids: List[str]) -> bool:
+    """Verify tokens exist on CLOB before updating config"""
+    from py_clob_client.client import ClobClient
+    from py_clob_client.constants import POLYGON
+    
+    # Initialize client (no authentication needed for read-only operations)
+    client = ClobClient(
+        host="https://clob.polymarket.com",
+        chain_id=POLYGON
+    )
+    
+    for token_id in token_ids:
+        try:
+            book = client.get_order_book(token_id)
+            if not book or (not book.bids and not book.asks):
+                print(f"❌ No liquidity for {token_id}")
+                return False
+            print(f"✅ Token {token_id} validated (has orderbook)")
+        except Exception as e:
+            print(f"❌ Token {token_id} invalid: {e}")
+            return False
+    
+    return True
 
 if __name__ == "__main__":
     asyncio.run(main())
