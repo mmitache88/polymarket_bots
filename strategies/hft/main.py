@@ -18,6 +18,7 @@ from .models import (
 from .logger import get_logger, HFTLogger
 from .db import init_db, get_open_positions, save_position, remove_position, save_trade
 from .gateways.mock_gateway import MockPolymarketGateway, MockBinanceGateway
+from .gateways.polymarket_gateway import PolymarketGateway
 from .strategies.early_entry import EarlyEntryStrategy
 from .core.risk_manager import RiskManager
 from .core.execution_service import ExecutionService
@@ -64,11 +65,13 @@ class HFTBot:
         
         # Load existing positions
         self._load_positions()
-        
+
+        # Initialize client (will be None for mock mode)
+        client = None
+
         # Initialize gateways
         if self.config.execution.mock_mode:
             self.logger.info("MOCK_MODE_ENABLED")
-            client = None # No client needed for mock
             self.market_gateway = MockPolymarketGateway(
                 token_id=token_id,
                 initial_mid=0.45,
@@ -82,11 +85,24 @@ class HFTBot:
         else:
             # Live mode: Initialize real client
             self.logger.info("LIVE_MODE_ENABLED")
-            from shared.polymarket_client import get_clob_client
-            client = get_clob_client()  # Get real Polymarket client
 
-            # TODO: Implement real gateways
-            raise NotImplementedError("Live gateways not yet implemented")
+            # Get real Polymarket client
+            from ..shared.polymarket_client import get_client
+            client = get_client(strategy="hft")
+
+            #REAL market gateway
+            self.market_gateway = PolymarketGateway(
+                token_id=token_id,
+                strategy="hft",
+                update_interval=0.1  # 100ms polling
+            )
+
+            # Real oracle gateway (still using mock for now)
+            # TODO: Replace with real Binance WebSocket gateway
+            self.oracle_gateway = MockBinanceGateway(
+                assets=self.config.market.tracked_assets,
+                update_interval=0.2
+            )
         
         # Set up callbacks
         self.market_gateway.on_update = self._on_market_update
