@@ -87,7 +87,7 @@ class HFTBot:
             self.logger.info("LIVE_MODE_ENABLED")
 
             # Get real Polymarket client
-            from ..shared.polymarket_client import get_client
+            from shared.polymarket_client import get_client
             client = get_client(strategy="hft")
 
             #REAL market gateway
@@ -372,19 +372,50 @@ class HFTBot:
 async def main():
     """Entry point for running the bot"""
     import argparse
+    import json
+    from pathlib import Path
     
+    # 1. Read config.json DIRECTLY to bypass Python import cache
+    config_path = Path(__file__).parent / "config.json"
+    
+    try:
+        with open(config_path, "r") as f:
+            config_data = json.load(f)
+        
+        # Extract token IDs safely
+        token_ids = config_data.get("market", {}).get("token_ids", [])
+        default_token = token_ids[0] if token_ids else "mock_token_123"
+        
+        print(f"DEBUG: Config path: {config_path}")
+        print(f"DEBUG: Loaded {len(token_ids)} tokens from disk")
+        print(f"DEBUG: Default token set to: {default_token}")
+        
+    except Exception as e:
+        print(f"DEBUG: Failed to read config.json: {e}")
+        default_token = "mock_token_123"
+
+    # 2. Setup Arguments
     parser = argparse.ArgumentParser(description="HFT Trading Bot")
-    parser.add_argument("--token-id", type=str, default="mock_token_123", help="Token ID to trade")
+    parser.add_argument("--token-id", type=str, default=default_token, help="Token ID to trade")
     parser.add_argument("--dry-run", action="store_true", help="Dry run mode")
     parser.add_argument("--mock", action="store_true", help="Use mock data")
+    parser.add_argument("--live", action="store_true", help="Use live market data") 
     args = parser.parse_args()
+    
+    # 3. Now load the config object for the bot
+    from .config import config
     
     # Override config from args
     if args.dry_run:
         config.execution.dry_run = True
-    if args.mock:
+    
+    # Handle mock/live mode
+    if args.live:
+        config.execution.mock_mode = False
+    elif args.mock:
         config.execution.mock_mode = True
     
+    # 4. Run Bot
     bot = HFTBot(config)
     await bot.run(args.token_id)
 
