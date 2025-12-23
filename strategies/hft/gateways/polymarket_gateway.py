@@ -63,6 +63,11 @@ class PolymarketGateway:
                 "has_bids": len(book.bids) if book and book.bids else 0,
                 "has_asks": len(book.asks) if book and book.asks else 0,
             })
+
+            # ✅ FIX: Send this initial data to the strategy immediately
+            if book and (book.bids or book.asks) and self.on_update:
+                update = self._convert_orderbook(book)
+                await self.on_update(update)
             
         except Exception as e:
             self.logger.error("POLY_CONNECT_FAILED", {
@@ -106,8 +111,8 @@ class PolymarketGateway:
                     if self._update_count % 100 == 0:
                         self.logger.info("POLY_HEARTBEAT", {
                             "count": self._update_count,
-                            "mid": update.mid_price,
-                            "spread_bps": update.spread_bps,
+                            "mid": update.order_book.mid_price,
+                            "spread_pct": update.order_book.spread_pct,
                         })
                 
                 else:
@@ -129,23 +134,29 @@ class PolymarketGateway:
     def _convert_orderbook(self, book: OrderBookSummary) -> MarketUpdate:
         """
         Convert py-clob-client OrderBookSummary to our MarketUpdate model.
-        
-        OrderBookSummary has:
-        - bids: List[OrderBookLevel] - sorted by price descending
-        - asks: List[OrderBookLevel] - sorted by price ascending
-        
-        OrderBookLevel has:
-        - price: str (e.g., "0.52")
-        - size: str (e.g., "100.5")
         """
         timestamp = datetime.utcnow()
         
-        # Extract best bid/ask
-        best_bid = float(book.bids[0].price) if book.bids else 0.0
-        best_ask = float(book.asks[0].price) if book.asks else 1.0
+        # ✅ FIX: Explicitly sort to guarantee Top of Book
+        # Bids: Highest price is best (Reverse sort)
+        sorted_bids = sorted(book.bids, key=lambda x: float(x.price), reverse=True) if book.bids else []
         
-        best_bid_size = float(book.bids[0].size) if book.bids else 0.0
-        best_ask_size = float(book.asks[0].size) if book.asks else 0.0
+        # Asks: Lowest price is best (Normal sort)
+        sorted_asks = sorted(book.asks, key=lambda x: float(x.price)) if book.asks else []
+        
+        # Extract best bid/ask
+        best_bid = float(sorted_bids[0].price) if sorted_bids else 0.0
+        best_ask = float(sorted_asks[0].price) if sorted_asks else 1.0
+
+        # ✅ DEBUG: Log the raw values to see why mid_price is 0.5
+        # (You can remove this later once verified)
+        if self._update_count % 10 == 0:  # Log every 10th update to avoid spam
+             self.logger.info("DEBUG_PRICES", {
+                "raw_bid_0": book.bids[0].price if book.bids else "None",
+                "sorted_bid_0": sorted_bids[0].price if sorted_bids else "None",
+                "parsed_bid": best_bid,
+                "parsed_ask": best_ask
+            })
         
         # Calculate mid price
         if best_bid > 0 and best_ask < 1:
@@ -157,31 +168,35 @@ class PolymarketGateway:
         else:
             mid_price = 0.5  # Fallback
         
-        # Calculate spread
-        spread_bps = ((best_ask - best_bid) / mid_price * 10000) if mid_price > 0 else 0
+        # Calculate spread percentage
+        spread_pct = ((best_ask - best_bid) / mid_price) if mid_price > 0 else 0
         
-        # Convert full book depth
+        # Convert full book depth to dictionaries
         bids = [
-            (float(level.price), float(level.size))
+            {"price": float(level.price), "size": float(level.size)}
             for level in book.bids[:10]  # Top 10 levels
         ] if book.bids else []
         
         asks = [
-            (float(level.price), float(level.size))
+            {"price": float(level.price), "size": float(level.size)}
             for level in book.asks[:10]
         ] if book.asks else []
+        
+        # Construct the nested OrderBook structure
+        order_book_data = {
+            "token_id": self.token_id,  # ✅ ADDED: Required by OrderBook model
+            "mid_price": mid_price,
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "spread_pct": spread_pct,
+            "bids": bids,
+            "asks": asks
+        }
         
         return MarketUpdate(
             timestamp=timestamp,
             token_id=self.token_id,
-            best_bid=best_bid,
-            best_ask=best_ask,
-            best_bid_size=best_bid_size,
-            best_ask_size=best_ask_size,
-            mid_price=mid_price,
-            spread_bps=spread_bps,
-            bids=bids,
-            asks=asks,
+            order_book=order_book_data
         )
     
     async def disconnect(self):
