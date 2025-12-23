@@ -90,6 +90,21 @@ class HFTBot:
             from shared.polymarket_client import get_client
             client = get_client(strategy="hft")
 
+             # ✅ FIX: Calculate end time for Hourly Market (Top of the next hour)
+            now = datetime.utcnow()
+            # Round up to the next hour
+            next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+            
+            self.market_start_time = next_hour - timedelta(hours=1) # Assumes 1h duration
+            self.market_end_time = next_hour
+            
+            self.logger.info("MARKET_TIMES_SET", {
+                "type": "hourly_inferred",
+                "start": self.market_start_time.isoformat(),
+                "end": self.market_end_time.isoformat(),
+                "minutes_left": (self.market_end_time - now).total_seconds() / 60
+            })
+
             #REAL market gateway
             self.market_gateway = PolymarketGateway(
                 token_id=token_id,
@@ -121,8 +136,8 @@ class HFTBot:
         )
         
         # Set market times (mock: 1 hour from now)
-        self.market_start_time = datetime.utcnow()
-        self.market_end_time = datetime.utcnow() + timedelta(minutes=55)
+        # self.market_start_time = datetime.utcnow()
+        # self.market_end_time = datetime.utcnow() + timedelta(minutes=55)
         
         self.logger.info("SETUP_COMPLETE", {
             "strategy": self.strategy.name,
