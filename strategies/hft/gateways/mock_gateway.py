@@ -6,8 +6,8 @@ Simulates Polymarket and Binance WebSocket feeds.
 
 import asyncio
 import random
-from datetime import datetime
-from typing import Callable, Optional
+from datetime import datetime, timedelta
+from typing import Callable, Optional, List, Any  # ✅ Added List, Any
 
 from ..models import MarketUpdate, OracleUpdate, OrderBook, OrderBookLevel
 from ..logger import get_logger
@@ -91,27 +91,32 @@ class MockPolymarketGateway:
             
             # Call the callback if set
             if self.on_update:
-                self.on_update(update)
+                if asyncio.iscoroutinefunction(self.on_update):
+                    await self.on_update(update)
+                else:
+                    self.on_update(update)
             
             await asyncio.sleep(self.update_interval)
 
 
 class MockBinanceGateway:
     """
-    Mock Binance WebSocket gateway.
-    
-    Simulates price updates for BTC, ETH, XRP.
+    Simulates a Binance Oracle by generating random price walks.
+    Useful for testing strategy logic without needing API keys.
     """
     
     def __init__(
         self,
-        assets: list = None,
-        update_interval: float = 0.2
+        assets: List[str] = None,
+        update_interval: float = 1.0,
+        volatility: float = 0.0001
     ):
-        self.assets = assets or ["BTCUSDT", "ETHUSDT", "XRPUSDT"]
+        self.assets = assets or ["BTCUSDT", "ETHUSDT"]
         self.update_interval = update_interval
-        self.is_running = False
-        self.on_update: Optional[Callable[[OracleUpdate], None]] = None
+        self.volatility = volatility
+        
+        # ✅ FIX: Initialize the logger here
+        self.logger = get_logger("strategies.hft.gateways.mock_gateway")
         
         # Initial prices
         self.prices = {
@@ -120,60 +125,61 @@ class MockBinanceGateway:
             "XRPUSDT": 2.35
         }
         
-        # Volatility per asset
-        self.volatility = {
-            "BTCUSDT": 50.0,
-            "ETHUSDT": 5.0,
-            "XRPUSDT": 0.01
-        }
-    
+        self.on_update: Optional[Callable[[OracleUpdate], Any]] = None
+        self._running = False
+        self._update_count = 0
+
     async def connect(self):
-        """Connect to mock feed"""
-        logger.info("MOCK_BINANCE_CONNECT", {"assets": self.assets})
-        self.is_running = True
-    
-    async def disconnect(self):
-        """Disconnect from mock feed"""
-        logger.info("MOCK_BINANCE_DISCONNECT")
-        self.is_running = False
-    
+        """Mock connection"""
+        self.logger.info("MOCK_BINANCE_CONNECT", {"assets": self.assets})
+        await asyncio.sleep(0.1)
+
     async def run(self):
-        """Generate mock price updates"""
-        logger.info("MOCK_BINANCE_RUN_START", {"is_running": self.is_running})
+        """Start generating mock updates"""
+        self._running = True
+        self.logger.info("MOCK_BINANCE_RUN_START", {"is_running": self._running})
         
-        update_count = 0
-        while self.is_running:
-            update_count += 1
-            
-            # Update each asset
-            for asset in self.assets:
-                if asset not in self.prices:
-                    continue
+        while self._running:
+            try:
+                # Update prices with random walk
+                for asset in self.assets:
+                    change_pct = random.gauss(0, self.volatility)
+                    self.prices[asset] *= (1 + change_pct)
                 
-                # Random walk
-                vol = self.volatility.get(asset, 1.0)
-                change = random.gauss(0, vol)
-                self.prices[asset] = max(0.01, self.prices[asset] + change)
+                self._update_count += 1
                 
+                # Create update object
+                primary_asset = self.assets[0]
                 update = OracleUpdate(
-                    asset=asset,
-                    price=self.prices[asset],
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.utcnow(),
+                    asset=primary_asset,
+                    price=self.prices[primary_asset],
+                    confidence=1.0
                 )
                 
-                # Call the callback if set
-                if self.on_update:
-                    self.on_update(update)
-            
-            # Log every 50th update
-            if update_count % 50 == 1:
-                logger.info("MOCK_ORACLE_UPDATE", {
-                    "count": update_count,
+                self.logger.info("MOCK_ORACLE_UPDATE", {
+                    "count": self._update_count,
                     "prices": {k: round(v, 2) for k, v in self.prices.items()},
                     "has_callback": self.on_update is not None
                 })
-            
-            await asyncio.sleep(self.update_interval)
+                
+                if self.on_update:
+                    # Handle both async and sync callbacks
+                    if asyncio.iscoroutinefunction(self.on_update):
+                        await self.on_update(update)
+                    else:
+                        self.on_update(update)
+                
+                await asyncio.sleep(self.update_interval)
+                
+            except Exception as e:
+                self.logger.error("MOCK_ORACLE_ERROR", {"error": str(e)})
+                await asyncio.sleep(1.0)
+
+    async def disconnect(self):  # ✅ FIX: Changed 'sync def' to 'async def'
+        """Stop the gateway"""
+        self._running = False
+        self.logger.info("MOCK_BINANCE_DISCONNECT")
 
 
 class MockMarketInfo:
