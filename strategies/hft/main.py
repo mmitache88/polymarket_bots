@@ -152,7 +152,7 @@ class HFTBot:
             "total_exposure": self.inventory.total_exposure
         })
     
-    def _on_market_update(self, update: MarketUpdate):
+    async def _on_market_update(self, update: MarketUpdate):
         """Callback for market gateway updates"""
         self.latest_market_update = update
         
@@ -163,7 +163,7 @@ class HFTBot:
                 ask=update.order_book.best_ask or 0
             )
     
-    def _on_oracle_update(self, update: OracleUpdate):
+    async def _on_oracle_update(self, update: OracleUpdate):
         """Callback for oracle gateway updates"""
         self.latest_oracle_update = update
         
