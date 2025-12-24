@@ -59,6 +59,38 @@ class HFTBot:
     async def setup(self, token_id: str):
         """Initialize all components"""
         self.logger.info("SETUP_START", {"token_id": token_id})
+
+        # ✅ AUTO-DISCOVERY LOGIC
+        if token_id == "auto":
+            self.logger.info("AUTO_FETCHING_MARKET")
+            try:
+                from shared.gamma_client import fetch_current_hourly_market
+                market_data = fetch_current_hourly_market()
+                
+                if market_data and market_data['token_ids']:
+                    # Default to the "YES" token (Index 0 based on your verification)
+                    # You could add logic here to pick based on config (e.g. "outcome": "YES")
+                    token_id = market_data['token_ids'][0] 
+                    
+                    self.logger.info("MARKET_FOUND", {
+                        "question": market_data['question'],
+                        "token_id": token_id,
+                        "end_date": market_data['end_date']
+                    })
+                    
+                    # Update the instance token_id
+                    self.token_id = token_id
+                    
+                    # OPTIONAL: Set exact market times from API data
+                    if market_data.get('end_date'):
+                        # Parse ISO format (e.g. 2025-12-24T22:00:00Z)
+                        self.market_end_time = datetime.fromisoformat(market_data['end_date'].replace('Z', '+00:00'))
+                        self.market_start_time = self.market_end_time - timedelta(hours=1)
+                else:
+                    raise ValueError("Could not find active hourly market via Gamma API")
+            except Exception as e:
+                self.logger.error("AUTO_FETCH_FAILED", {"error": str(e)})
+                raise e
         
         # Initialize database
         init_db()
