@@ -68,9 +68,25 @@ class HFTBot:
                 market_data = fetch_current_hourly_market()
                 
                 if market_data and market_data['token_ids']:
+                    # DEBUG: Print the type and content
+                    self.logger.info("DEBUG_TOKEN_IDS", {
+                        "type": str(type(market_data['token_ids'])),
+                        "content": market_data['token_ids']
+                    })
+
                     # Default to the "YES" token (Index 0 based on your verification)
                     # You could add logic here to pick based on config (e.g. "outcome": "YES")
-                    token_id = market_data['token_ids'][0] 
+                    
+                    # SAFETY CHECK: Ensure it's a list
+                    ids = market_data['token_ids']
+                    if isinstance(ids, str):
+                        import json
+                        try:
+                            ids = json.loads(ids)
+                        except:
+                            # If it's a string but not JSON, maybe it's just one ID?
+                            pass
+                    token_id = ids[0]
                     
                     self.logger.info("MARKET_FOUND", {
                         "question": market_data['question'],
