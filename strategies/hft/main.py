@@ -60,6 +60,12 @@ class HFTBot:
         """Initialize all components"""
         self.logger.info("SETUP_START", {"token_id": token_id})
 
+        # ✅ Initialize HFT Database
+        init_hft_db()
+        
+        # Initialize database (This is likely the old shared DB, keep it if needed)
+        init_db()
+
         # ✅ AUTO-DISCOVERY LOGIC
         if token_id == "auto":
             self.logger.info("AUTO_FETCHING_MARKET")
@@ -269,6 +275,8 @@ class HFTBot:
         self.logger.info("MAIN_LOOP_START")
         
         loop_count = 0
+        last_db_save = 0  # Track last save time
+        
         while self.is_running:
             loop_count += 1
             # Debug: Log every 50 iterations
@@ -291,12 +299,29 @@ class HFTBot:
                 await asyncio.sleep(0.1)
                 continue
 
+            # ✅ SAVE TO DB (Every 5 seconds)
+            now_ts = datetime.utcnow().timestamp()
+            if now_ts - last_db_save >= 5.0:
+                try:
+                    save_market_tick(
+                        token_id=self.token_id,
+                        best_bid=self.market_gateway.latest_update.order_book.best_bid if self.market_gateway.latest_update and self.market_gateway.latest_update.order_book else 0,
+                        best_ask=self.market_gateway.latest_update.order_book.best_ask if self.market_gateway.latest_update and self.market_gateway.latest_update.order_book else 0,
+                        mid_price=snapshot.poly_mid_price,
+                        oracle_price=snapshot.oracle_price or 0.0,
+                        minutes_until_close=snapshot.minutes_until_close
+                    )
+                    last_db_save = now_ts
+                except Exception as e:
+                    # Log error but don't crash the loop
+                    self.logger.error("DB_SAVE_ERROR", {"error": str(e)})
+
             # Debug: Log snapshot built
             self.logger.info("SNAPSHOT_BUILT", {
                 "mid_price": snapshot.poly_mid_price,
                 "oracle_price": snapshot.oracle_price,
                 "minutes_since_open": snapshot.minutes_since_open,
-                "minutes_until_close": snapshot.minutes_until_close  # ← ADD THIS
+                "minutes_until_close": snapshot.minutes_until_close
             })
             
             # Run strategy
