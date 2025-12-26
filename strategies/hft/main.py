@@ -148,20 +148,16 @@ class HFTBot:
             from shared.polymarket_client import get_client
             client = get_client(strategy="hft")
 
-             # ✅ FIX: Calculate end time for Hourly Market (Top of the next hour)
-            now = datetime.utcnow()
-            # Round up to the next hour
-            next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-            
-            self.market_start_time = next_hour - timedelta(hours=1) # Assumes 1h duration
-            self.market_end_time = next_hour
-            
-            self.logger.info("MARKET_TIMES_SET", {
-                "type": "hourly_inferred",
-                "start": self.market_start_time.isoformat(),
-                "end": self.market_end_time.isoformat(),
-                "minutes_left": (self.market_end_time - now).total_seconds() / 60
-            })
+             # ✅ FIX: Only infer times if they weren't already set by Auto-Discovery
+            if not self.market_end_time:
+                now = datetime.utcnow()
+                next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+                self.market_start_time = next_hour - timedelta(hours=1)
+                self.market_end_time = next_hour
+                
+                self.logger.info("MARKET_TIMES_INFERRED", {
+                    "end": self.market_end_time.isoformat()
+                })
 
             #REAL market gateway
             self.market_gateway = PolymarketGateway(
@@ -309,15 +305,19 @@ class HFTBot:
                 try:
                     save_market_tick(
                         token_id=self.token_id,
-                        best_bid=self.market_gateway.latest_update.order_book.best_bid if self.market_gateway.latest_update and self.market_gateway.latest_update.order_book else 0,
-                        best_ask=self.market_gateway.latest_update.order_book.best_ask if self.market_gateway.latest_update and self.market_gateway.latest_update.order_book else 0,
+                        best_bid=snapshot.poly_best_bid,
+                        best_ask=snapshot.poly_best_ask,
                         mid_price=snapshot.poly_mid_price,
                         oracle_price=snapshot.oracle_price or 0.0,
                         minutes_until_close=snapshot.minutes_until_close
                     )
                     last_db_save = now_ts
+                    self.logger.info("DB_TICK_SAVED", {
+                        "token_id": self.token_id, 
+                        "bid": snapshot.poly_best_bid, 
+                        "ask": snapshot.poly_best_ask
+                    })
                 except Exception as e:
-                    # Log error but don't crash the loop
                     self.logger.error("DB_SAVE_ERROR", {"error": str(e)})
 
             # Debug: Log snapshot built
