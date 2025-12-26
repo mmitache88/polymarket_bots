@@ -16,7 +16,14 @@ from .models import (
     Outcome, OrderStatus
 )
 from .logger import get_logger, HFTLogger
-from .db import init_db, get_open_positions, save_position, remove_position, save_trade
+from .db import (
+    init_hft_db, 
+    save_market_tick, 
+    get_open_positions, 
+    save_position, 
+    remove_position, 
+    save_trade
+)
 from .gateways.mock_gateway import MockPolymarketGateway, MockBinanceGateway
 from .gateways.polymarket_gateway import PolymarketGateway
 from .strategies.early_entry import EarlyEntryStrategy
@@ -62,9 +69,9 @@ class HFTBot:
 
         # ✅ Initialize HFT Database
         init_hft_db()
-        
-        # Initialize database (This is likely the old shared DB, keep it if needed)
-        init_db()
+
+        # ✅ Ensure self.token_id is set even if not using "auto"
+        self.token_id = token_id
 
         # ✅ AUTO-DISCOVERY LOGIC
         if token_id == "auto":
@@ -113,9 +120,6 @@ class HFTBot:
             except Exception as e:
                 self.logger.error("AUTO_FETCH_FAILED", {"error": str(e)})
                 raise e
-        
-        # Initialize database
-        init_db()
         
         # Load existing positions
         self._load_positions()
