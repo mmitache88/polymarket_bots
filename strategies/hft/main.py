@@ -6,7 +6,7 @@ Async event loop that wires all components together.
 
 import asyncio
 import signal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .config import config, HFTConfig
@@ -150,7 +150,7 @@ class HFTBot:
 
              # ✅ FIX: Only infer times if they weren't already set by Auto-Discovery
             if not self.market_end_time:
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
                 self.market_start_time = next_hour - timedelta(hours=1)
                 self.market_end_time = next_hour
@@ -198,7 +198,7 @@ class HFTBot:
             "mock_mode": self.config.execution.mock_mode,
             "dry_run": self.config.execution.dry_run,
             "market_end_time": self.market_end_time.isoformat(),  # Add for debugging
-            "minutes_until_close": (self.market_end_time - datetime.utcnow()).total_seconds() / 60
+            "minutes_until_close": (self.market_end_time - datetime.now(timezone.utc)).total_seconds() / 60
         })
     
     def _load_positions(self):
@@ -244,15 +244,19 @@ class HFTBot:
     
     def _build_snapshot(self) -> Optional[MarketSnapshot]:
         """Build MarketSnapshot from latest updates"""
-        if not self.latest_market_update:
+        if not self.latest_market_update or not self.latest_oracle_update:
             return None
-        
+
         ob = self.latest_market_update.order_book
+        if not ob:
+            return None
+
+        now = datetime.now(timezone.utc) # ✅ Use aware datetime
         
         # Calculate time metrics
-        now = datetime.utcnow()
-        minutes_since_open = (now - self.market_start_time).total_seconds() / 60 if self.market_start_time else 0
-        minutes_until_close = (self.market_end_time - now).total_seconds() / 60 if self.market_end_time else 60
+        total_duration = (self.market_end_time - self.market_start_time).total_seconds() / 60
+        minutes_until_close = (self.market_end_time - now).total_seconds() / 60
+        minutes_since_open = (now - self.market_start_time).total_seconds() / 60
         
         return MarketSnapshot(
             token_id=self.latest_market_update.token_id,
