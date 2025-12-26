@@ -174,13 +174,13 @@ class PolymarketGateway:
         # Convert full book depth to dictionaries
         bids = [
             {"price": float(level.price), "size": float(level.size)}
-            for level in book.bids[:10]  # Top 10 levels
-        ] if book.bids else []
+            for level in sorted_bids[:10]  # ✅ FIX: Use sorted_bids
+        ] if sorted_bids else []
         
         asks = [
             {"price": float(level.price), "size": float(level.size)}
-            for level in book.asks[:10]
-        ] if book.asks else []
+            for level in sorted_asks[:10]  # ✅ FIX: Use sorted_asks
+        ] if sorted_asks else []
         
         # Construct the nested OrderBook structure
         order_book_data = {

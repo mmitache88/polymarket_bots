@@ -6,7 +6,7 @@ Simulates Polymarket and Binance WebSocket feeds.
 
 import asyncio
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional, List, Any  # ✅ Added List, Any
 
 from ..models import MarketUpdate, OracleUpdate, OrderBook, OrderBookLevel
@@ -72,13 +72,13 @@ class MockPolymarketGateway:
                     OrderBookLevel(price=self.mid_price + half_spread, size=random.uniform(100, 500)),
                     OrderBookLevel(price=self.mid_price + half_spread + 0.01, size=random.uniform(200, 800)),
                 ],
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc) # ✅ FIX: Use aware datetime
             )
             
             update = MarketUpdate(
                 token_id=self.token_id,
                 order_book=order_book,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc) # ✅ FIX: Use aware datetime
             )
             
             # Log every 10th update
@@ -111,23 +111,23 @@ class MockBinanceGateway:
         update_interval: float = 1.0,
         volatility: float = 0.0001
     ):
-        self.assets = assets or ["BTCUSDT", "ETHUSDT"]
+        self.assets = assets or ["BTCUSDT"]
         self.update_interval = update_interval
         self.volatility = volatility
-        
-        # ✅ FIX: Initialize the logger here
         self.logger = get_logger("strategies.hft.gateways.mock_gateway")
         
-        # Initial prices
-        self.prices = {
-            "BTCUSDT": 104500.0,
-            "ETHUSDT": 3900.0,
-            "XRPUSDT": 2.35
-        }
+        # ✅ FIX: Iterate over self.assets (not assets, which could be None)
+        self.prices = {}
+        for asset in self.assets:
+            if "BTC" in asset:
+                self.prices[asset] = 104500.0
+            else:
+                self.prices[asset] = 1.0
         
-        self.on_update: Optional[Callable[[OracleUpdate], Any]] = None
+        self.on_update: None
         self._running = False
         self._update_count = 0
+        self.logger = get_logger("strategies.hft.gateways.mock_gateway")
 
     async def connect(self):
         """Mock connection"""
@@ -151,20 +151,18 @@ class MockBinanceGateway:
                 # Create update object
                 primary_asset = self.assets[0]
                 update = OracleUpdate(
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc), # ✅ FIX: Use aware datetime
                     asset=primary_asset,
-                    price=self.prices[primary_asset],
-                    confidence=1.0
+                    price=self.prices[primary_asset]
                 )
                 
-                self.logger.info("MOCK_ORACLE_UPDATE", {
-                    "count": self._update_count,
-                    "prices": {k: round(v, 2) for k, v in self.prices.items()},
-                    "has_callback": self.on_update is not None
-                })
+                if self._update_count % 5 == 0: # Log every 5th to reduce noise
+                    self.logger.info("MOCK_ORACLE_UPDATE", {
+                        "count": self._update_count,
+                        "prices": {k: round(v, 2) for k, v in self.prices.items()}
+                    })
                 
                 if self.on_update:
-                    # Handle both async and sync callbacks
                     if asyncio.iscoroutinefunction(self.on_update):
                         await self.on_update(update)
                     else:
@@ -193,6 +191,6 @@ class MockMarketInfo:
             "condition_id": f"condition_{token_id[:8]}",
             "question": "Will BTC be above $104,000 at 12:00 UTC?",
             "outcome": "YES",
-            "end_date": (datetime.utcnow() + timedelta(minutes=55)).isoformat(),
+            "end_date": (datetime.now(timezone.utc) + timedelta(minutes=55)).isoformat(), # ✅ FIX: Use aware datetime
             "market_slug": "btc-104000-12pm"
         }

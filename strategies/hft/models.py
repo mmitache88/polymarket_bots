@@ -4,9 +4,9 @@ Pydantic models for HFT strategy
 Strict typing for all events, states, and data transfer objects.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from enum import Enum
 
 
@@ -61,42 +61,43 @@ class OrderBookLevel(BaseModel):
     size: float
 
 
-class OrderBook(BaseModel):
-    """Local order book state"""
-    token_id: str
-    bids: List[OrderBookLevel] = []
-    asks: List[OrderBookLevel] = []
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-    
+class OrderBook(BaseModel): # ✅ Inherit from BaseModel
+    bids: List[OrderBookLevel]
+    asks: List[OrderBookLevel]
+
+    @model_validator(mode='after')
+    def sort_book(self) -> 'OrderBook':
+        """Ensure bids and asks are always sorted correctly after initialization"""
+        self.bids = sorted(self.bids, key=lambda x: x.price, reverse=True)
+        self.asks = sorted(self.asks, key=lambda x: x.price)
+        return self
+
     @property
-    def best_bid(self) -> Optional[float]:
-        return self.bids[0].price if self.bids else None
-    
+    def best_bid(self) -> float:
+        return self.bids[0].price if self.bids else 0.0
+
     @property
-    def best_ask(self) -> Optional[float]:
-        return self.asks[0].price if self.asks else None
-    
+    def best_ask(self) -> float:
+        return self.asks[0].price if self.asks else 0.0
+
     @property
-    def mid_price(self) -> Optional[float]:
-        if self.best_bid and self.best_ask:
+    def mid_price(self) -> float:
+        if self.best_bid > 0 and self.best_ask > 0:
             return (self.best_bid + self.best_ask) / 2
-        return None
-    
+        return 0.0
+
     @property
-    def spread(self) -> Optional[float]:
-        if self.best_bid and self.best_ask:
-            return self.best_ask - self.best_bid
-        return None
-    
-    @property
-    def spread_pct(self) -> Optional[float]:
-        if self.mid_price and self.spread:
-            return (self.spread / self.mid_price) * 100
-        return None
+    def spread_pct(self) -> float:
+        mid = self.mid_price
+        if mid > 0:
+            return (self.best_ask - self.best_bid) / mid
+        return 0.0
 
 
 class MarketInfo(BaseModel):
     """Static market information"""
+    timestamp: datetime
+    order_book: OrderBook
     token_id: str
     condition_id: str
     question: str
@@ -106,7 +107,8 @@ class MarketInfo(BaseModel):
     
     @property
     def minutes_until_close(self) -> float:
-        delta = self.end_date - datetime.utcnow()
+        # ✅ FIX: Use aware datetime to match API end_date
+        delta = self.end_date - datetime.now(timezone.utc)
         return delta.total_seconds() / 60
 
 
@@ -118,14 +120,14 @@ class MarketUpdate(BaseModel):
     """Event emitted by MarketGateway on order book change"""
     token_id: str
     order_book: OrderBook
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class OracleUpdate(BaseModel):
     """Event emitted by OracleGateway on price change"""
     asset: str  # e.g., "BTCUSDT"
     price: float
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ============================================================
@@ -145,7 +147,7 @@ class MarketSnapshot(BaseModel):
     
     # Oracle data (Binance)
     oracle_price: Optional[float] = None
-    oracle_asset: str = ""
+    oracle_asset: str = "" # Keep generic
     
     # Market metadata
     outcome: Outcome = Outcome.YES
@@ -156,7 +158,7 @@ class MarketSnapshot(BaseModel):
     implied_probability: Optional[float] = None  # poly_mid_price
     
     # Timestamp
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Position(BaseModel):
@@ -228,7 +230,7 @@ class TradeIntent(BaseModel):
     price: float
     size: float  # In dollars
     reason: str  # Human-readable explanation
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc)) # ✅ FIX
     
     # Strategy metadata
     strategy_name: str = "unknown"
@@ -245,7 +247,7 @@ class OrderRequest(BaseModel):
     
     # Risk metadata
     risk_checks_passed: List[str] = []
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc)) # ✅ FIX
 
 
 class Rejection(BaseModel):
@@ -254,7 +256,7 @@ class Rejection(BaseModel):
     reason: RejectionReason  # Change from str to RejectionReason
     risk_check_failed: str
     details: str = ""  # Add this optional field
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc)) # ✅ FIX
 
 
 class OrderState(BaseModel):
@@ -278,7 +280,7 @@ class ExecutionReport(BaseModel):
     filled_price: Optional[float] = None
     filled_at: Optional[datetime] = None
     error_message: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc)) # ✅ FIX
 
 # ============================================================
 # System Events
@@ -288,7 +290,7 @@ class KillSwitchEvent(BaseModel):
     """Emergency shutdown event"""
     reason: str
     triggered_by: str  # "user", "drawdown", "error"
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc)) # ✅ FIX
 
 
 class SystemStatus(BaseModel):
