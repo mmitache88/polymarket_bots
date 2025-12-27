@@ -289,10 +289,6 @@ class HFTBot:
             })
             
             try:
-                # Disconnect current gateways
-                await self.market_gateway.disconnect()
-                await self.oracle_gateway.disconnect()
-                
                 # Re-run auto-discovery to find next market
                 from shared.gamma_client import fetch_current_hourly_market
                 market_data = fetch_current_hourly_market()
@@ -329,13 +325,35 @@ class HFTBot:
                         market_data['end_date'].replace('Z', '+00:00')
                     )
                     self.market_start_time = self.market_end_time - timedelta(hours=1)
+                    
+                    # ✅ CRITICAL FIX: Restart market gateway with new token
+                    old_token = self.token_id
                     self.token_id = new_token_id
                     
-                    # Reconnect gateways with new token
+                    # Stop the old market gateway task
+                    if hasattr(self, '_market_gateway_task'):
+                        self._market_gateway_task.cancel()
+                        try:
+                            await self._market_gateway_task
+                        except asyncio.CancelledError:
+                            pass
+                        
+                        self.logger.info("GATEWAY_TASK_CANCELLED")
+                    
+                    # Update token_id and restart gateway
+                    await self.market_gateway.disconnect()
                     self.market_gateway.token_id = new_token_id
                     await self.market_gateway.connect()
+                    self._market_gateway_task = asyncio.create_task(self.market_gateway.run())
+                    
+                    self.logger.info("GATEWAY_TASK_RESTARTED", {"new_token": new_token_id})
+                    
+                    # Clear positions for new market
+                    self.inventory.positions = []
+                    self.inventory.total_exposure = 0
                     
                     self.logger.info("MARKET_ROLLOVER_COMPLETE", {
+                        "old_token_id": old_token,
                         "new_token_id": new_token_id,
                         "new_strike": self.strike_price,
                         "new_end_time": self.market_end_time.isoformat()
@@ -558,12 +576,14 @@ class HFTBot:
             
             self.is_running = True
             
-            # Run all tasks concurrently
-            await asyncio.gather(
-                self.market_gateway.run(),
-                self.oracle_gateway.run(),
-                self._main_loop()
-            )
+            # ✅ Start tasks
+            self._market_gateway_task = asyncio.create_task(self.market_gateway.run())
+            self._oracle_gateway_task = asyncio.create_task(self.oracle_gateway.run())
+            self._main_loop_task = asyncio.create_task(self._main_loop())
+            
+            # ✅ Wait for main loop to finish (it controls shutdown)
+            # Don't wait for gateway tasks since they may be cancelled during rollover
+            await self._main_loop_task
         
         except KeyboardInterrupt:
             self.logger.info("KEYBOARD_INTERRUPT")
@@ -574,6 +594,17 @@ class HFTBot:
         
         finally:
             self.is_running = False
+            
+            # ✅ Cancel all tasks
+            for task in [self._market_gateway_task, self._oracle_gateway_task, self._main_loop_task]:
+                if task and not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+            
+            # Disconnect gateways
             if self.market_gateway:
                 await self.market_gateway.disconnect()
             if self.oracle_gateway:
