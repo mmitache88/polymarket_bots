@@ -26,6 +26,7 @@ from .db import (
 )
 from .gateways.mock_gateway import MockPolymarketGateway, MockBinanceGateway
 from .gateways.polymarket_gateway import PolymarketGateway
+from .gateways.polymarket_ws_gateway import PolymarketWebSocketGateway  # ✅ NEW
 from .strategies.early_entry import EarlyEntryStrategy
 from .core.risk_manager import RiskManager
 from .core.execution_service import ExecutionService
@@ -55,7 +56,7 @@ class HFTBot:
         self.inventory = Inventory()
         self.market_start_time: Optional[datetime] = None
         self.market_end_time: Optional[datetime] = None
-        self.strike_price = 0.0  # ✅ Initialize strike price
+        self.strike_price = 0.0
         
         # Components (initialized in setup)
         self.market_gateway = None
@@ -63,6 +64,9 @@ class HFTBot:
         self.strategy = None
         self.risk_manager = None
         self.execution_service = None
+        
+        # ✅ NEW: Separate REST client for execution (initialized in setup)
+        self.execution_client = None
     
     async def setup(self, token_id: str):
         """Initialize all components"""
@@ -171,15 +175,19 @@ class HFTBot:
                 assets=self.config.market.tracked_assets,
                 update_interval=0.2
             )
+
+            # No execution client in mock mode
+            self.execution_client = None
+
         else:
-            # Live mode: Initialize real client
+            # ✅ LIVE MODE: WebSocket for market data, REST for execution
             self.logger.info("LIVE_MODE_ENABLED")
 
-            # Get real Polymarket client
+            # ✅ FIX: Initialize REST client for EXECUTION ONLY and store in instance variable
             from shared.polymarket_client import get_client
-            client = get_client(strategy="hft")
+            self.execution_client = get_client(strategy="hft")  # ✅ CHANGED: Use self.execution_client
 
-             # ✅ FIX: Only infer times if they weren't already set by Auto-Discovery
+            # ✅ FIX: Only infer times if they weren't already set by Auto-Discovery
             if not self.market_end_time:
                 now = datetime.now(timezone.utc)
                 next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
@@ -190,21 +198,19 @@ class HFTBot:
                     "end": self.market_end_time.isoformat()
                 })
 
-            #REAL market gateway
-            self.market_gateway = PolymarketGateway(
-                token_id=token_id,
-                strategy="hft",
-                update_interval=0.1  # 100ms polling
+            # ✅ CHANGED: Use WebSocket gateway for MARKET DATA
+            self.market_gateway = PolymarketWebSocketGateway(
+                token_id=token_id
             )
 
-            # ✅ FIXED: Use real Binance WebSocket in live mode
+            # ✅ Use real Binance WebSocket in live mode
             from strategies.hft.gateways.binance_gateway import BinanceWebSocketGateway
             self.oracle_gateway = BinanceWebSocketGateway(
                 symbols=["BTCUSDT"],
                 update_interval=0.2
             )
         
-        # Set up callbacks
+        # Set up callbacks (same for both modes)
         self.market_gateway.on_update = self._on_market_update
         self.oracle_gateway.on_update = self._on_oracle_update
         
@@ -214,21 +220,20 @@ class HFTBot:
         # Initialize risk manager
         self.risk_manager = RiskManager(self.config.risk)
         
-        # Initialize execution service with client (None for mock, real for live)
+        # ✅ CHANGED: Pass execution_client (None for mock, ClobClient for live)
         self.execution_service = ExecutionService(
-            client=client,  # ✅ None for mock, ClobClient for live
+            client=self.execution_client,  # ✅ Separate REST client for execution
             config=self.config.execution
         )
-        
-        # Set market times (mock: 1 hour from now)
-        # self.market_start_time = datetime.utcnow()
-        # self.market_end_time = datetime.utcnow() + timedelta(minutes=55)
+
         
         self.logger.info("SETUP_COMPLETE", {
             "strategy": self.strategy.name,
             "mock_mode": self.config.execution.mock_mode,
             "dry_run": self.config.execution.dry_run,
-            "market_end_time": self.market_end_time.isoformat(),  # Add for debugging
+            "market_data_source": "WebSocket" if not self.config.execution.mock_mode else "Mock",
+            "execution_source": "REST API" if self.execution_client else "Mock",
+            "market_end_time": self.market_end_time.isoformat(),
             "minutes_until_close": (self.market_end_time - datetime.now(timezone.utc)).total_seconds() / 60
         })
     
@@ -340,9 +345,19 @@ class HFTBot:
                         
                         self.logger.info("GATEWAY_TASK_CANCELLED")
                     
-                    # Update token_id and restart gateway
+                    # ✅ CHANGED: Properly restart WebSocket gateway
                     await self.market_gateway.disconnect()
-                    self.market_gateway.token_id = new_token_id
+                    
+                    # ✅ For WebSocket: Create new instance with new token_id
+                    if isinstance(self.market_gateway, PolymarketWebSocketGateway):
+                        self.market_gateway = PolymarketWebSocketGateway(
+                            token_id=new_token_id
+                        )
+                        self.market_gateway.on_update = self._on_market_update
+                    else:
+                        # For REST gateway (fallback)
+                        self.market_gateway.token_id = new_token_id
+                    
                     await self.market_gateway.connect()
                     self._market_gateway_task = asyncio.create_task(self.market_gateway.run())
                     
