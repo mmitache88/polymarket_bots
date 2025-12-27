@@ -198,18 +198,11 @@ class HFTBot:
             )
 
             # ✅ FIXED: Use real Binance WebSocket in live mode
-            if self.config.execution.mock_mode:
-                from strategies.hft.gateways.mock_gateway import MockBinanceGateway
-                self.oracle_gateway = MockBinanceGateway(
-                    assets=self.config.market.tracked_assets,
-                    update_interval=0.2
-                )
-            else:
-                from strategies.hft.gateways.binance_gateway import BinanceWebSocketGateway
-                self.oracle_gateway = BinanceWebSocketGateway(
-                    symbols=["BTCUSDT"],
-                    update_interval=0.2
-                )
+            from strategies.hft.gateways.binance_gateway import BinanceWebSocketGateway
+            self.oracle_gateway = BinanceWebSocketGateway(
+                symbols=["BTCUSDT"],
+                update_interval=0.2
+            )
         
         # Set up callbacks
         self.market_gateway.on_update = self._on_market_update
@@ -279,6 +272,82 @@ class HFTBot:
                 asset=update.asset,
                 price=update.price
             )
+
+    async def _check_market_rollover(self) -> bool:
+        """
+        Check if current market is about to close and switch to next market.
+        Returns True if rollover happened, False otherwise.
+        """
+        now = datetime.now(timezone.utc)
+        minutes_left = (self.market_end_time - now).total_seconds() / 60
+        
+        # Switch 2 minutes before close to avoid missing the new market
+        if minutes_left <= 2.0:
+            self.logger.info("MARKET_ROLLOVER_TRIGGERED", {
+                "old_market": self.token_id,
+                "minutes_left": minutes_left
+            })
+            
+            try:
+                # Disconnect current gateways
+                await self.market_gateway.disconnect()
+                await self.oracle_gateway.disconnect()
+                
+                # Re-run auto-discovery to find next market
+                from shared.gamma_client import fetch_current_hourly_market
+                market_data = fetch_current_hourly_market()
+                
+                if market_data and market_data['token_ids']:
+                    import json
+                    ids = market_data['token_ids']
+                    if isinstance(ids, str):
+                        ids = json.loads(ids)
+                    
+                    new_token_id = ids[0]
+                    
+                    # Only switch if it's a different market
+                    if new_token_id == self.token_id:
+                        self.logger.info("ROLLOVER_SKIPPED", {"reason": "Same market still active"})
+                        return False
+                    
+                    # Extract new strike price
+                    raw_market = market_data.get('raw_market', {})
+                    event_start = raw_market.get('eventStartTime')
+                    
+                    if event_start:
+                        from shared.binance_client import get_btc_price_at_timestamp
+                        start_time = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
+                        self.strike_price = get_btc_price_at_timestamp(start_time)
+                        
+                        self.logger.info("NEW_STRIKE_FROM_BINANCE", {
+                            "timestamp": event_start,
+                            "price": self.strike_price
+                        })
+                    
+                    # Update market times
+                    self.market_end_time = datetime.fromisoformat(
+                        market_data['end_date'].replace('Z', '+00:00')
+                    )
+                    self.market_start_time = self.market_end_time - timedelta(hours=1)
+                    self.token_id = new_token_id
+                    
+                    # Reconnect gateways with new token
+                    self.market_gateway.token_id = new_token_id
+                    await self.market_gateway.connect()
+                    
+                    self.logger.info("MARKET_ROLLOVER_COMPLETE", {
+                        "new_token_id": new_token_id,
+                        "new_strike": self.strike_price,
+                        "new_end_time": self.market_end_time.isoformat()
+                    })
+                    
+                    return True
+                
+            except Exception as e:
+                self.logger.error("ROLLOVER_FAILED", {"error": str(e)})
+                return False
+        
+        return False
     
     def _build_snapshot(self) -> Optional[MarketSnapshot]:
         """Build MarketSnapshot from latest updates"""
@@ -322,6 +391,15 @@ class HFTBot:
         
         while self.is_running:
             loop_count += 1
+
+            # ✅ Check for market rollover
+            rolled_over = await self._check_market_rollover()
+            if rolled_over:
+                # Clear positions for new market (or implement position carry-over logic)
+                self.inventory.positions = []
+                self.inventory.total_exposure = 0
+                continue  # Skip this iteration to let new market data flow in
+
             # Debug: Log every 50 iterations
             if loop_count % 50 == 0:
                 self.logger.info("LOOP_HEARTBEAT", {
@@ -422,7 +500,7 @@ class HFTBot:
                 outcome=intent.outcome,
                 shares=shares,
                 entry_price=intent.price,
-                entry_time=datetime.utcnow()
+                entry_time=datetime.now(timezone.utc)  # ✅ FIXED
             )
             self.inventory.positions.append(position)
             self.inventory.total_exposure += intent.size
