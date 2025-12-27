@@ -55,7 +55,12 @@ def load_market_data(token_id):
             best_ask,
             mid_price,
             oracle_price,
-            minutes_until_close
+            minutes_until_close,
+            bid_liquidity,
+            ask_liquidity,
+            distance_to_strike_pct,
+            order_flow_imbalance,
+            market_session
         FROM market_ticks
         WHERE token_id = ?
         ORDER BY timestamp ASC
@@ -84,6 +89,9 @@ app.layout = html.Div([
     ], style={'padding': '20px'}),
     
     dcc.Graph(id='price-chart', style={'height': '700px'}),
+    
+    # ✅ NEW: Phase 1 Metrics Chart
+    dcc.Graph(id='metrics-chart', style={'height': '500px', 'marginTop': '20px'}),
     
     html.Div(id='market-stats', style={
         'padding': '20px',
@@ -117,7 +125,7 @@ app.layout = html.Div([
                     'backgroundColor': '#ffffff'
                 }
             ],
-            page_size=100,  # ✅ Changed from 20 to 100 rows per page
+            page_size=100,
             sort_action='native',
             filter_action='native'
         )
@@ -126,6 +134,7 @@ app.layout = html.Div([
 
 @app.callback(
     [Output('price-chart', 'figure'),
+     Output('metrics-chart', 'figure'),  # ✅ NEW
      Output('market-stats', 'children'),
      Output('data-table', 'data'),
      Output('data-table', 'columns')],
@@ -133,34 +142,36 @@ app.layout = html.Div([
 )
 def update_chart(token_id):
     if not token_id:
-        # Empty chart
-        fig = go.Figure()
-        fig.add_annotation(
+        # Empty charts
+        fig_price = go.Figure()
+        fig_price.add_annotation(
             text="Please select a market from the dropdown",
             xref="paper", yref="paper",
             x=0.5, y=0.5, showarrow=False,
             font=dict(size=20)
         )
-        return fig, html.P("No market selected"), [], []
+        fig_metrics = go.Figure()
+        return fig_price, fig_metrics, html.P("No market selected"), [], []
     
     # Load data
     df = load_market_data(token_id)
     
     if df.empty:
-        fig = go.Figure()
-        fig.add_annotation(
+        fig_price = go.Figure()
+        fig_price.add_annotation(
             text="No data available for this market",
             xref="paper", yref="paper",
             x=0.5, y=0.5, showarrow=False,
             font=dict(size=20)
         )
-        return fig, html.P("No data found"), [], []
+        fig_metrics = go.Figure()
+        return fig_price, fig_metrics, html.P("No data found"), [], []
     
-    # Create figure with secondary y-axis
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    # ========== PRICE CHART ==========
+    fig_price = make_subplots(specs=[[{"secondary_y": True}]])
     
     # Add Oracle Price (left y-axis)
-    fig.add_trace(
+    fig_price.add_trace(
         go.Scatter(
             x=df['timestamp'],
             y=df['oracle_price'],
@@ -173,7 +184,7 @@ def update_chart(token_id):
     )
     
     # Add Strike Price (left y-axis)
-    fig.add_trace(
+    fig_price.add_trace(
         go.Scatter(
             x=df['timestamp'],
             y=df['strike_price'],
@@ -186,7 +197,7 @@ def update_chart(token_id):
     )
     
     # Add Best Bid (right y-axis)
-    fig.add_trace(
+    fig_price.add_trace(
         go.Scatter(
             x=df['timestamp'],
             y=df['best_bid'],
@@ -199,7 +210,7 @@ def update_chart(token_id):
     )
     
     # Add Best Ask (right y-axis)
-    fig.add_trace(
+    fig_price.add_trace(
         go.Scatter(
             x=df['timestamp'],
             y=df['best_ask'],
@@ -212,12 +223,12 @@ def update_chart(token_id):
     )
     
     # Update axes
-    fig.update_xaxes(title_text="Time (UTC)")
-    fig.update_yaxes(title_text="BTC Price (USD)", secondary_y=False)
-    fig.update_yaxes(title_text="Polymarket Price", secondary_y=True)
+    fig_price.update_xaxes(title_text="Time (UTC)")
+    fig_price.update_yaxes(title_text="BTC Price (USD)", secondary_y=False)
+    fig_price.update_yaxes(title_text="Polymarket Price", secondary_y=True)
     
     # Update layout
-    fig.update_layout(
+    fig_price.update_layout(
         title=f"Market Data: {df['timestamp'].min()} to {df['timestamp'].max()}",
         hovermode='x unified',
         legend=dict(
@@ -229,7 +240,95 @@ def update_chart(token_id):
         )
     )
     
-    # Calculate stats
+    # ========== PHASE 1 METRICS CHART ==========
+    fig_metrics = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=(
+            'Liquidity (Bid vs Ask)',
+            'Order Flow Imbalance',
+            'Distance to Strike %'
+        )
+    )
+    
+    # Row 1: Liquidity
+    fig_metrics.add_trace(
+        go.Scatter(
+            x=df['timestamp'],
+            y=df['bid_liquidity'],
+            mode='lines',
+            name='Bid Liquidity',
+            line=dict(color='green', width=1.5),
+            hovertemplate='Bid Liq: $%{y:.0f}<extra></extra>'
+        ),
+        row=1, col=1
+    )
+    fig_metrics.add_trace(
+        go.Scatter(
+            x=df['timestamp'],
+            y=df['ask_liquidity'],
+            mode='lines',
+            name='Ask Liquidity',
+            line=dict(color='orange', width=1.5),
+            hovertemplate='Ask Liq: $%{y:.0f}<extra></extra>'
+        ),
+        row=1, col=1
+    )
+    
+    # Row 2: Order Flow Imbalance
+    fig_metrics.add_trace(
+        go.Scatter(
+            x=df['timestamp'],
+            y=df['order_flow_imbalance'],
+            mode='lines',
+            name='Order Flow Imbalance',
+            line=dict(color='purple', width=2),
+            fill='tozeroy',
+            hovertemplate='Imbalance: %{y:.3f}<extra></extra>'
+        ),
+        row=2, col=1
+    )
+    # Add zero line
+    fig_metrics.add_hline(y=0, line_dash="dash", line_color="gray", row=2, col=1)
+    
+    # Row 3: Distance to Strike
+    fig_metrics.add_trace(
+        go.Scatter(
+            x=df['timestamp'],
+            y=df['distance_to_strike_pct'],
+            mode='lines',
+            name='Distance to Strike %',
+            line=dict(color='red', width=2),
+            fill='tozeroy',
+            hovertemplate='Distance: %{y:.2f}%<extra></extra>'
+        ),
+        row=3, col=1
+    )
+    # Add zero line
+    fig_metrics.add_hline(y=0, line_dash="dash", line_color="gray", row=3, col=1)
+    
+    # Update axes labels
+    fig_metrics.update_yaxes(title_text="USD ($)", row=1, col=1)
+    fig_metrics.update_yaxes(title_text="Imbalance", row=2, col=1)
+    fig_metrics.update_yaxes(title_text="Percent (%)", row=3, col=1)
+    fig_metrics.update_xaxes(title_text="Time (UTC)", row=3, col=1)
+    
+    # Update layout
+    fig_metrics.update_layout(
+        height=500,
+        hovermode='x unified',
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    # ========== CALCULATE STATS ==========
     stats = html.Div([
         html.H3("Market Statistics"),
         html.P(f"Total Ticks: {len(df)}"),
@@ -239,9 +338,16 @@ def update_chart(token_id):
         html.P(f"Market Outcome: {'🟢 UP' if df['oracle_price'].iloc[-1] > df['strike_price'].iloc[0] else '🔴 DOWN'}"),
         html.P(f"Bid Range: ${df['best_bid'].min():.3f} - ${df['best_bid'].max():.3f}"),
         html.P(f"Ask Range: ${df['best_ask'].min():.3f} - ${df['best_ask'].max():.3f}"),
+        html.Hr(),
+        html.H4("Phase 1 Metrics Summary"),
+        html.P(f"Avg Bid Liquidity: ${df['bid_liquidity'].mean():.0f}"),
+        html.P(f"Avg Ask Liquidity: ${df['ask_liquidity'].mean():.0f}"),
+        html.P(f"Avg Order Flow Imbalance: {df['order_flow_imbalance'].mean():.3f}"),
+        html.P(f"Max Distance to Strike: {df['distance_to_strike_pct'].abs().max():.2f}%"),
+        html.P(f"Market Sessions: {df['market_session'].value_counts().to_dict()}"),
     ])
     
-    # Prepare table data (round numeric columns for readability)
+    # ========== PREPARE TABLE DATA ==========
     df_display = df.copy()
     df_display['timestamp'] = df_display['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
     df_display['strike_price'] = df_display['strike_price'].round(2)
@@ -250,6 +356,10 @@ def update_chart(token_id):
     df_display['mid_price'] = df_display['mid_price'].round(3)
     df_display['oracle_price'] = df_display['oracle_price'].round(2)
     df_display['minutes_until_close'] = df_display['minutes_until_close'].round(2)
+    df_display['bid_liquidity'] = df_display['bid_liquidity'].round(0)
+    df_display['ask_liquidity'] = df_display['ask_liquidity'].round(0)
+    df_display['distance_to_strike_pct'] = df_display['distance_to_strike_pct'].round(2)
+    df_display['order_flow_imbalance'] = df_display['order_flow_imbalance'].round(3)
     
     # Define table columns
     columns = [
@@ -259,12 +369,17 @@ def update_chart(token_id):
         {"name": "Best Ask", "id": "best_ask"},
         {"name": "Mid Price", "id": "mid_price"},
         {"name": "Oracle Price", "id": "oracle_price"},
-        {"name": "Mins to Close", "id": "minutes_until_close"}
+        {"name": "Mins to Close", "id": "minutes_until_close"},
+        {"name": "Bid Liquidity", "id": "bid_liquidity"},
+        {"name": "Ask Liquidity", "id": "ask_liquidity"},
+        {"name": "Distance to Strike %", "id": "distance_to_strike_pct"},
+        {"name": "Order Flow Imbalance", "id": "order_flow_imbalance"},
+        {"name": "Market Session", "id": "market_session"}
     ]
     
     table_data = df_display.to_dict('records')
     
-    return fig, stats, table_data, columns
+    return fig_price, fig_metrics, stats, table_data, columns
 
 if __name__ == '__main__':
     app.run(debug=True, port=8050)
