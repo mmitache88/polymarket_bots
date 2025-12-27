@@ -3,7 +3,7 @@ Pydantic models for HFT strategy
 
 Strict typing for all events, states, and data transfer objects.
 """
-
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, List, Literal
 from pydantic import BaseModel, Field, model_validator
@@ -134,32 +134,41 @@ class OracleUpdate(BaseModel):
 # State Models (Maintained by StateAggregator)
 # ============================================================
 
-class MarketSnapshot(BaseModel):
-    """Combined state from all data sources - input to StrategyEngine"""
-    # Polymarket data
+@dataclass
+class MarketSnapshot:
+    """Complete view of market state at a point in time"""
+    # Identifiers
     token_id: str
-    strike_price: float = 0.0  # ✅ ADDED: The target BTC price (e.g., 104000)
-    poly_mid_price: Optional[float] = None
-    poly_best_bid: Optional[float] = None
-    poly_best_ask: Optional[float] = None
-    poly_spread_pct: Optional[float] = None
-    poly_bid_liquidity: float = 0.0
-    poly_ask_liquidity: float = 0.0
+    outcome: Outcome
     
-    # Oracle data (Binance)
-    oracle_price: Optional[float] = None
-    oracle_asset: str = "" # Keep generic
+    # Polymarket prices
+    poly_mid_price: float
+    poly_best_bid: Optional[float]
+    poly_best_ask: Optional[float]
+    poly_spread_pct: float
+    poly_bid_liquidity: float
+    poly_ask_liquidity: float
     
-    # Market metadata
-    outcome: Outcome = Outcome.YES
-    minutes_until_close: float = 60.0
-    minutes_since_open: float = 0.0
+    # Oracle prices
+    oracle_price: Optional[float]
+    oracle_asset: str
+    strike_price: float
+    
+    # Time metrics
+    minutes_until_close: float
+    minutes_since_open: float
     
     # Derived metrics
-    implied_probability: Optional[float] = None  # poly_mid_price
+    implied_probability: float
     
-    # Timestamp
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # ✅ Phase 1 metrics
+    distance_to_strike_pct: float = 0.0
+    order_flow_imbalance: float = 0.0
+    market_session: str = "UNKNOWN"
+    
+    @property
+    def is_market_open(self) -> bool:
+        return self.minutes_until_close > 0
 
 
 class Position(BaseModel):

@@ -376,28 +376,59 @@ class HFTBot:
         if not ob:
             return None
 
-        now = datetime.now(timezone.utc) # ✅ Use aware datetime
+        now = datetime.now(timezone.utc)
         
         # Calculate time metrics
         total_duration = (self.market_end_time - self.market_start_time).total_seconds() / 60
         minutes_until_close = (self.market_end_time - now).total_seconds() / 60
         minutes_since_open = (now - self.market_start_time).total_seconds() / 60
         
+        # ✅ Calculate Phase 1 metrics
+        bid_liquidity = sum(level.size for level in ob.bids) if ob.bids else 0.0
+        ask_liquidity = sum(level.size for level in ob.asks) if ob.asks else 0.0
+        
+        oracle_price = self.latest_oracle_update.price if self.latest_oracle_update else 0.0
+        
+        # Distance to strike (%)
+        distance_to_strike_pct = (
+            ((oracle_price - self.strike_price) / self.strike_price * 100)
+            if self.strike_price > 0 else 0.0
+        )
+        
+        # Order flow imbalance (-1 to +1)
+        total_liquidity = bid_liquidity + ask_liquidity
+        order_flow_imbalance = (
+            ((bid_liquidity - ask_liquidity) / total_liquidity)
+            if total_liquidity > 0 else 0.0
+        )
+        
+        # Market session (EARLY/MID/LATE)
+        if minutes_since_open < 20:
+            market_session = "EARLY"
+        elif minutes_since_open < 40:
+            market_session = "MID"
+        else:
+            market_session = "LATE"
+        
         return MarketSnapshot(
             token_id=self.latest_market_update.token_id,
-            strike_price=self.strike_price, # ✅ Pass to snapshot
+            strike_price=self.strike_price,
             poly_mid_price=ob.mid_price,
             poly_best_bid=ob.best_bid,
             poly_best_ask=ob.best_ask,
             poly_spread_pct=ob.spread_pct,
-            poly_bid_liquidity=sum(level.size for level in ob.bids),
-            poly_ask_liquidity=sum(level.size for level in ob.asks),
-            oracle_price=self.latest_oracle_update.price if self.latest_oracle_update else None,
+            poly_bid_liquidity=bid_liquidity,
+            poly_ask_liquidity=ask_liquidity,
+            oracle_price=oracle_price,
             oracle_asset=self.latest_oracle_update.asset if self.latest_oracle_update else "",
-            outcome=Outcome.YES,  # TODO: Handle both outcomes
+            outcome=Outcome.YES,
             minutes_until_close=minutes_until_close,
             minutes_since_open=minutes_since_open,
-            implied_probability=ob.mid_price
+            implied_probability=ob.mid_price,
+            # ✅ Store Phase 1 metrics in snapshot for easy access
+            distance_to_strike_pct=distance_to_strike_pct,
+            order_flow_imbalance=order_flow_imbalance,
+            market_session=market_session
         )
 
     async def _main_loop(self):
@@ -439,24 +470,32 @@ class HFTBot:
                 continue
 
             # ✅ SAVE TO DB (Every 5 seconds)
-            now = datetime.now(timezone.utc) # ✅ FIXED: Use aware datetime
+            now = datetime.now(timezone.utc)
             now_ts = now.timestamp()
             if now_ts - last_db_save >= 5.0:
                 try:
                     save_market_tick(
                         token_id=self.token_id,
-                        strike_price=snapshot.strike_price, # ✅ Pass strike_price to DB helper
+                        strike_price=snapshot.strike_price,
                         best_bid=snapshot.poly_best_bid,
                         best_ask=snapshot.poly_best_ask,
                         mid_price=snapshot.poly_mid_price,
                         oracle_price=snapshot.oracle_price or 0.0,
-                        minutes_until_close=snapshot.minutes_until_close
+                        minutes_until_close=snapshot.minutes_until_close,
+                        # ✅ Phase 1 metrics
+                        bid_liquidity=snapshot.poly_bid_liquidity,
+                        ask_liquidity=snapshot.poly_ask_liquidity,
+                        distance_to_strike_pct=snapshot.distance_to_strike_pct,
+                        order_flow_imbalance=snapshot.order_flow_imbalance,
+                        market_session=snapshot.market_session
                     )
                     last_db_save = now_ts
                     self.logger.info("DB_TICK_SAVED", {
                         "token_id": self.token_id, 
                         "bid": snapshot.poly_best_bid, 
-                        "ask": snapshot.poly_best_ask
+                        "ask": snapshot.poly_best_ask,
+                        "session": snapshot.market_session,  # ✅ Log session
+                        "imbalance": f"{snapshot.order_flow_imbalance:.3f}"  # ✅ Log imbalance
                     })
                 except Exception as e:
                     self.logger.error("DB_SAVE_ERROR", {"error": str(e)})

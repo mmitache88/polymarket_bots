@@ -20,12 +20,18 @@ def init_hft_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         token_id TEXT,
-        strike_price REAL, -- ✅ ADDED
+        strike_price REAL,
         best_bid REAL,
         best_ask REAL,
         mid_price REAL,
         oracle_price REAL,
-        minutes_until_close REAL
+        minutes_until_close REAL,
+        -- ✅ Phase 1 metrics
+        bid_liquidity REAL,
+        ask_liquidity REAL,
+        distance_to_strike_pct REAL,
+        order_flow_imbalance REAL,
+        market_session TEXT
     )
     """)
     
@@ -130,14 +136,30 @@ def save_trade(
     conn.commit()
     conn.close()
 
-def save_market_tick(token_id, strike_price, best_bid, best_ask, mid_price, oracle_price, minutes_until_close):
-    try: # ✅ ADDED: Missing try block
-        conn = sqlite3.connect(DB_FILE) # ✅ FIXED: DB_PATH -> DB_FILE
+def save_market_tick(
+    token_id, 
+    strike_price, 
+    best_bid, 
+    best_ask, 
+    mid_price, 
+    oracle_price, 
+    minutes_until_close,
+    bid_liquidity,           # ✅ NEW
+    ask_liquidity,           # ✅ NEW
+    distance_to_strike_pct,  # ✅ NEW
+    order_flow_imbalance,    # ✅ NEW
+    market_session           # ✅ NEW
+):
+    try:
+        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO market_ticks ( -- ✅ FIXED: ticks -> market_ticks
-                timestamp, token_id, strike_price, best_bid, best_ask, mid_price, oracle_price, minutes_until_close
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO market_ticks (
+                timestamp, token_id, strike_price, best_bid, best_ask, mid_price, 
+                oracle_price, minutes_until_close,
+                bid_liquidity, ask_liquidity, distance_to_strike_pct, 
+                order_flow_imbalance, market_session
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
             token_id,
@@ -146,11 +168,16 @@ def save_market_tick(token_id, strike_price, best_bid, best_ask, mid_price, orac
             best_ask,
             mid_price,
             oracle_price,
-            minutes_until_close
+            minutes_until_close,
+            bid_liquidity,           # ✅ NEW
+            ask_liquidity,           # ✅ NEW
+            distance_to_strike_pct,  # ✅ NEW
+            order_flow_imbalance,    # ✅ NEW
+            market_session           # ✅ NEW
         ))
         conn.commit()
         conn.close()
-    except Exception as e: # ✅ FIXED: Now inside try/except
+    except Exception as e:
         print(f"DATABASE_ERROR: {e}")
         raise e
 
