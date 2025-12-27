@@ -1,9 +1,13 @@
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 DB_FILE = "hft_data.db"
+
+# ✅ Use absolute path to avoid confusion
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(os.path.dirname(os.path.dirname(BASE_DIR)), "hft_data.db")
 
 def init_hft_db():
     """Initialize the HFT database schema"""
@@ -16,6 +20,7 @@ def init_hft_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         token_id TEXT,
+        strike_price REAL, -- ✅ ADDED
         best_bid REAL,
         best_ask REAL,
         mid_price REAL,
@@ -36,6 +41,17 @@ def init_hft_db():
         pnl REAL
     )
     """)
+
+     # Positions table: For persistence across restarts
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS hft_positions (
+        token_id TEXT PRIMARY KEY,
+        outcome TEXT,
+        shares REAL,
+        entry_price REAL,
+        entry_time TIMESTAMP
+    )
+    """)
     
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ticks_token ON market_ticks(token_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ticks_time ON market_ticks(timestamp)")
@@ -43,20 +59,66 @@ def init_hft_db():
     conn.commit()
     conn.close()
 
-def save_market_tick(token_id: str, best_bid: float, best_ask: float, 
-                     mid_price: float, oracle_price: float, minutes_until_close: float):
-    """Save a single market snapshot to the DB"""
+def get_open_positions():
+    """Fetch all open positions from DB"""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM hft_positions")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def save_position(token_id, outcome, shares, entry_price, entry_time):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    
     cursor.execute("""
-    INSERT INTO market_ticks 
-    (token_id, best_bid, best_ask, mid_price, oracle_price, minutes_until_close)
-    VALUES (?, ?, ?, ?, ?, ?)
-    """, (token_id, best_bid, best_ask, mid_price, oracle_price, minutes_until_close))
-    
+        INSERT OR REPLACE INTO hft_positions (token_id, outcome, shares, entry_price, entry_time)
+        VALUES (?, ?, ?, ?, ?)
+    """, (token_id, outcome, shares, entry_price, entry_time.isoformat()))
     conn.commit()
     conn.close()
+
+def remove_position(token_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM hft_positions WHERE token_id = ?", (token_id,))
+    conn.commit()
+    conn.close()
+
+def save_trade(token_id, side, price, size, pnl=0.0):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO hft_trades (token_id, side, price, size, pnl)
+        VALUES (?, ?, ?, ?, ?)
+    """, (token_id, side, price, size, pnl))
+    conn.commit()
+    conn.close()
+
+def save_market_tick(token_id, strike_price, best_bid, best_ask, mid_price, oracle_price, minutes_until_close):
+    try: # ✅ ADDED: Missing try block
+        conn = sqlite3.connect(DB_FILE) # ✅ FIXED: DB_PATH -> DB_FILE
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO market_ticks ( -- ✅ FIXED: ticks -> market_ticks
+                timestamp, token_id, strike_price, best_bid, best_ask, mid_price, oracle_price, minutes_until_close
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+            token_id,
+            strike_price,
+            best_bid,
+            best_ask,
+            mid_price,
+            oracle_price,
+            minutes_until_close
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e: # ✅ FIXED: Now inside try/except
+        print(f"DATABASE_ERROR: {e}")
+        raise e
 
 def get_recent_ticks(token_id: str, limit: int = 100):
     """Fetch recent ticks for analysis"""

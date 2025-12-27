@@ -55,6 +55,7 @@ class HFTBot:
         self.inventory = Inventory()
         self.market_start_time: Optional[datetime] = None
         self.market_end_time: Optional[datetime] = None
+        self.strike_price = 0.0  # ✅ Initialize strike price
         
         # Components (initialized in setup)
         self.market_gateway = None
@@ -100,9 +101,39 @@ class HFTBot:
                             # If it's a string but not JSON, maybe it's just one ID?
                             pass
                     token_id = ids[0]
+
+                    # ✅ Access the raw market object
+                    raw_market = market_data.get('raw_market', {})
+                    
+                    # Try to get strike from API fields (will be None for Up/Down markets)
+                    strike = (
+                        raw_market.get('line') or
+                        raw_market.get('strikePrice') or
+                        raw_market.get('initialPrice')
+                    )
+                    
+                    # ✅ Fallback: Calculate strike from Binance at eventStartTime
+                    if not strike or float(strike or 0) == 0:
+                        from shared.binance_client import get_btc_price_at_timestamp
+                        from datetime import datetime
+                        
+                        event_start = raw_market.get('eventStartTime')
+                        if event_start:
+                            start_time = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
+                            strike = get_btc_price_at_timestamp(start_time)
+                            
+                            self.logger.info("STRIKE_FROM_BINANCE", {
+                                "timestamp": event_start,
+                                "price": strike
+                            })
+                        else:
+                            strike = 0.0
+                    
+                    self.strike_price = float(strike)
                     
                     self.logger.info("MARKET_FOUND", {
                         "question": market_data['question'],
+                        "strike_price": self.strike_price, # ✅ FIXED: Use self.strike_price, not market_data
                         "token_id": token_id,
                         "end_date": market_data['end_date']
                     })
@@ -166,12 +197,19 @@ class HFTBot:
                 update_interval=0.1  # 100ms polling
             )
 
-            # Real oracle gateway (still using mock for now)
-            # TODO: Replace with real Binance WebSocket gateway
-            self.oracle_gateway = MockBinanceGateway(
-                assets=self.config.market.tracked_assets,
-                update_interval=0.2
-            )
+            # ✅ FIXED: Use real Binance WebSocket in live mode
+            if self.config.execution.mock_mode:
+                from strategies.hft.gateways.mock_gateway import MockBinanceGateway
+                self.oracle_gateway = MockBinanceGateway(
+                    assets=self.config.market.tracked_assets,
+                    update_interval=0.2
+                )
+            else:
+                from strategies.hft.gateways.binance_gateway import BinanceWebSocketGateway
+                self.oracle_gateway = BinanceWebSocketGateway(
+                    symbols=["BTCUSDT"],
+                    update_interval=0.2
+                )
         
         # Set up callbacks
         self.market_gateway.on_update = self._on_market_update
@@ -260,6 +298,7 @@ class HFTBot:
         
         return MarketSnapshot(
             token_id=self.latest_market_update.token_id,
+            strike_price=self.strike_price, # ✅ Pass to snapshot
             poly_mid_price=ob.mid_price,
             poly_best_bid=ob.best_bid,
             poly_best_ask=ob.best_ask,
@@ -273,7 +312,7 @@ class HFTBot:
             minutes_since_open=minutes_since_open,
             implied_probability=ob.mid_price
         )
-    
+
     async def _main_loop(self):
         """Main trading loop"""
         self.logger.info("MAIN_LOOP_START")
@@ -304,11 +343,13 @@ class HFTBot:
                 continue
 
             # ✅ SAVE TO DB (Every 5 seconds)
-            now_ts = datetime.utcnow().timestamp()
+            now = datetime.now(timezone.utc) # ✅ FIXED: Use aware datetime
+            now_ts = now.timestamp()
             if now_ts - last_db_save >= 5.0:
                 try:
                     save_market_tick(
                         token_id=self.token_id,
+                        strike_price=snapshot.strike_price, # ✅ Pass strike_price to DB helper
                         best_bid=snapshot.poly_best_bid,
                         best_ask=snapshot.poly_best_ask,
                         mid_price=snapshot.poly_mid_price,

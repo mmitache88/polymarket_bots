@@ -138,6 +138,7 @@ class MarketSnapshot(BaseModel):
     """Combined state from all data sources - input to StrategyEngine"""
     # Polymarket data
     token_id: str
+    strike_price: float = 0.0  # ✅ ADDED: The target BTC price (e.g., 104000)
     poly_mid_price: Optional[float] = None
     poly_best_bid: Optional[float] = None
     poly_best_ask: Optional[float] = None
