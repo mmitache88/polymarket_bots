@@ -511,6 +511,9 @@ class HFTBot:
     
     def _simulate_fill(self, intent: TradeIntent):
         """Simulate order fill for dry run mode"""
+        # ✅ Build snapshot to get market context
+        snapshot = self._build_snapshot()
+
         if intent.action.value == "ENTER":
             shares = intent.size / intent.price
             position = Position(
@@ -522,6 +525,32 @@ class HFTBot:
             )
             self.inventory.positions.append(position)
             self.inventory.total_exposure += intent.size
+
+            # ✅ ADDED: Record to database
+            save_position(
+                token_id=intent.token_id,
+                outcome=intent.outcome.value,
+                shares=shares,
+                entry_price=intent.price,
+                entry_time=position.entry_time
+            )
+            
+            save_trade(
+                token_id=intent.token_id,
+                side=intent.side.value,
+                outcome=intent.outcome.value,  # ✅ ADDED
+                price=intent.price,
+                size=intent.size,
+                shares=shares,  # ✅ ADDED
+                pnl=0.0,
+                strategy_reason=intent.reason,  # ✅ ADDED
+                oracle_price=snapshot.oracle_price if snapshot else 0.0,  # ✅ ADDED
+                strike_price=self.strike_price,  # ✅ ADDED
+                minutes_until_close=snapshot.minutes_until_close if snapshot else 0.0,  # ✅ ADDED
+                spread_pct=snapshot.poly_spread_pct if snapshot else 0.0,  # ✅ ADDED
+                bid_liquidity=snapshot.poly_bid_liquidity if snapshot else 0.0,  # ✅ ADDED
+                ask_liquidity=snapshot.poly_ask_liquidity if snapshot else 0.0  # ✅ ADDED
+            )
             
             self.logger.position_opened(
                 token_id=intent.token_id,
@@ -535,6 +564,27 @@ class HFTBot:
             if position:
                 pnl = (intent.price - position.entry_price) * position.shares
                 pnl_pct = (pnl / position.cost_basis) * 100
+
+                # ✅ ADDED: Record exit trade with P&L
+                save_trade(
+                    token_id=intent.token_id,
+                    side=intent.side.value,
+                    outcome=intent.outcome.value,  # ✅ ADDED
+                    price=intent.price,
+                    size=intent.size,
+                    shares=position.shares,  # ✅ ADDED
+                    pnl=pnl,
+                    strategy_reason=intent.reason,  # ✅ ADDED
+                    oracle_price=snapshot.oracle_price if snapshot else 0.0,  # ✅ ADDED
+                    strike_price=self.strike_price,  # ✅ ADDED
+                    minutes_until_close=snapshot.minutes_until_close if snapshot else 0.0,  # ✅ ADDED
+                    spread_pct=snapshot.poly_spread_pct if snapshot else 0.0,  # ✅ ADDED
+                    bid_liquidity=snapshot.poly_bid_liquidity if snapshot else 0.0,  # ✅ ADDED
+                    ask_liquidity=snapshot.poly_ask_liquidity if snapshot else 0.0  # ✅ ADDED
+                )
+                
+                # ✅ ADDED: Remove from positions table
+                remove_position(intent.token_id)
                 
                 self.logger.position_closed(
                     token_id=intent.token_id,

@@ -35,10 +35,21 @@ def init_hft_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         token_id TEXT,
-        side TEXT,
+        side TEXT,  -- BUY/SELL
+        outcome TEXT,  -- YES/NO
         price REAL,
-        size REAL,
-        pnl REAL
+        size REAL,  -- In dollars
+        shares REAL,  -- Actual shares filled
+        pnl REAL,  -- Realized P&L (0 for entries)
+        strategy_reason TEXT,  -- Why the trade was made
+        
+        -- ✅ NEW: Add these for ML backtesting
+        oracle_price_at_entry REAL,
+        strike_price REAL,
+        minutes_until_close REAL,
+        spread_pct REAL,
+        bid_liquidity REAL,
+        ask_liquidity REAL
     )
     """)
 
@@ -86,13 +97,36 @@ def remove_position(token_id):
     conn.commit()
     conn.close()
 
-def save_trade(token_id, side, price, size, pnl=0.0):
+def save_trade(
+    token_id: str,
+    side: str,
+    outcome: str,
+    price: float,
+    size: float,
+    shares: float,
+    pnl: float = 0.0,
+    strategy_reason: str = "",
+    oracle_price: float = 0.0,
+    strike_price: float = 0.0,
+    minutes_until_close: float = 0.0,
+    spread_pct: float = 0.0,
+    bid_liquidity: float = 0.0,
+    ask_liquidity: float = 0.0
+):
+    """Save trade execution with full context for backtesting"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO hft_trades (token_id, side, price, size, pnl)
-        VALUES (?, ?, ?, ?, ?)
-    """, (token_id, side, price, size, pnl))
+        INSERT INTO hft_trades (
+            token_id, side, outcome, price, size, shares, pnl, strategy_reason,
+            oracle_price_at_entry, strike_price, minutes_until_close,
+            spread_pct, bid_liquidity, ask_liquidity
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        token_id, side, outcome, price, size, shares, pnl, strategy_reason,
+        oracle_price, strike_price, minutes_until_close,
+        spread_pct, bid_liquidity, ask_liquidity
+    ))
     conn.commit()
     conn.close()
 
